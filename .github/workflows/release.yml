@@ -1,0 +1,99 @@
+name: Release
+
+# Push a tag such as v1.0.0 to build, test and publish a GitHub release with a
+# ready-to-run Windows package. Run it by hand to get the zip as a build
+# artifact without publishing anything.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $version = "0.0.0"
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Tag must look like v1.2.3, got $version." }
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Version $version"
+
+      - uses: ./.github/actions/setup-godot
+
+      - name: Fetch Stockfish
+        shell: pwsh
+        run: ./dev/fetch_stockfish.ps1
+
+      - name: Run tests
+        shell: pwsh
+        run: ./tests/run_tests.ps1
+
+      - name: Build the package
+        shell: pwsh
+        run: ./dev/build.ps1 -Version "${{ steps.version.outputs.value }}" -Zip
+
+      - name: Verify the package
+        shell: pwsh
+        run: |
+          foreach ($name in "NeoChess.exe", "stockfish.exe", "Copying.txt", "AUTHORS", "STOCKFISH.txt") {
+            if (-not (Test-Path (Join-Path "dist/NeoChess" $name))) { throw "Missing $name in the package." }
+          }
+          $out = & "dist/NeoChess/stockfish.exe" compiler
+          if (-not ($out -join " ").Contains("Stockfish")) { throw "Bundled Stockfish does not run." }
+
+      - name: Name the zip and write checksums
+        shell: pwsh
+        run: |
+          $zip = "dist/NeoChess-${{ steps.version.outputs.value }}-windows-x64.zip"
+          Move-Item -LiteralPath "dist/NeoChess-windows.zip" -Destination $zip -Force
+          $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $zip -Leaf)" | Out-File -FilePath "$zip.sha256" -Encoding ascii
+          Get-ChildItem dist | Where-Object { -not $_.PSIsContainer } | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeoChess-${{ steps.version.outputs.value }}-windows-x64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $notes = @"
+          ## Play
+
+          1. Download **NeoChess-${{ steps.version.outputs.value }}-windows-x64.zip** below.
+          2. Unzip it anywhere.
+          3. Run **NeoChess.exe**.
+
+          Stockfish 19 is included, so there is nothing else to install. Windows 10 or 11 (64-bit) is required.
+
+          SHA-256 is in the ``.sha256`` file. Stockfish is GPLv3; its license files are in the zip.
+          "@
+          gh release create $tag `
+            (Get-ChildItem dist/*.zip).FullName `
+            (Get-ChildItem dist/*.sha256).FullName `
+            --title "NeoChess $tag" `
+            --notes $notes `
+            --generate-notes `
+            --verify-tag

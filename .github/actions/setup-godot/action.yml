@@ -1,0 +1,72 @@
+name: Set up Godot
+description: Installs Godot and the Windows export templates, verified against the published SHA-512 sums, and exports GODOT for later steps.
+
+inputs:
+  version:
+    description: Godot version without the -stable suffix
+    default: "4.7.2"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Godot cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/godot-bin
+          ~/AppData/Roaming/Godot/export_templates
+        key: godot-${{ inputs.version }}-windows-v1
+
+    - name: Download Godot and templates
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $ProgressPreference = "SilentlyContinue"
+        $version = "${{ inputs.version }}"
+        $base = "https://github.com/godotengine/godot-builds/releases/download/$version-stable"
+        $work = Join-Path $env:RUNNER_TEMP "godot-download"
+        New-Item -ItemType Directory -Force -Path $work | Out-Null
+
+        $sums = (Invoke-WebRequest -Uri "$base/SHA512-SUMS.txt" -UseBasicParsing).Content -split "`n"
+
+        function Get-Verified([string]$name) {
+          $path = Join-Path $work $name
+          Invoke-WebRequest -Uri "$base/$name" -OutFile $path -UseBasicParsing
+          $line = $sums | Where-Object { $_ -match "\s$([regex]::Escape($name))\s*$" } | Select-Object -First 1
+          if (-not $line) { throw "No checksum published for $name" }
+          $expected = $line.Trim().Split(" ")[0]
+          $actual = (Get-FileHash -Path $path -Algorithm SHA512).Hash
+          if ($actual -ne $expected.ToUpper()) { throw "Checksum mismatch for $name" }
+          Write-Host "Verified $name"
+          return $path
+        }
+
+        $editor = Get-Verified "Godot_v$version-stable_win64.exe.zip"
+        $install = Join-Path $HOME "godot-bin"
+        Expand-Archive -LiteralPath $editor -DestinationPath $install -Force
+
+        $templates = Get-Verified "Godot_v$version-stable_export_templates.tpz"
+        $target = Join-Path $HOME "AppData/Roaming/Godot/export_templates/$version.stable"
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($templates)
+        try {
+          foreach ($entry in $archive.Entries) {
+            if ($entry.FullName -match '^templates/(version\.txt|icudt_godot\.dat|windows_(release|debug)_x86_64(_console)?\.exe)$') {
+              [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $target $entry.Name), $true)
+            }
+          }
+        } finally {
+          $archive.Dispose()
+        }
+        Remove-Item -LiteralPath $work -Recurse -Force
+
+    - name: Point GODOT at the console build
+      shell: pwsh
+      run: |
+        $console = Get-ChildItem -Path (Join-Path $HOME "godot-bin") -Filter "*console.exe" -Recurse | Select-Object -First 1
+        if (-not $console) { throw "Godot console executable not found." }
+        "GODOT=$($console.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        & $console.FullName --version

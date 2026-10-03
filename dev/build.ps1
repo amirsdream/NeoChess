@@ -14,11 +14,16 @@
 
 .PARAMETER Zip
   Also create dist/NeoChess-windows.zip.
+
+.PARAMETER Version
+  Version such as 1.2.0 to stamp into the exe properties. Rewrites
+  export_presets.cfg in the working copy, so it is meant for CI.
 #>
 param(
     [string]$Godot = $env:GODOT,
     [switch]$NoEngine,
-    [switch]$Zip
+    [switch]$Zip,
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +44,15 @@ if (-not $Godot -or -not (Test-Path $Godot)) {
 
 if (-not $NoEngine) {
     & (Join-Path $PSScriptRoot "fetch_stockfish.ps1")
+}
+
+if ($Version) {
+    if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3." }
+    $presets = Join-Path $root "export_presets.cfg"
+    $text = [System.IO.File]::ReadAllText($presets)
+    $text = $text -replace 'application/file_version="[^"]*"', "application/file_version=`"$Version.0`""
+    $text = $text -replace 'application/product_version="[^"]*"', "application/product_version=`"$Version.0`""
+    [System.IO.File]::WriteAllText($presets, $text)
 }
 
 New-Item -ItemType Directory -Force -Path $out | Out-Null

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-godot
+
+      - name: Cache Stockfish
+        id: stockfish
+        uses: actions/cache@v4
+        with:
+          path: |
+            bin/stockfish.exe
+            bin/Copying.txt
+            bin/AUTHORS
+            bin/STOCKFISH.txt
+          key: stockfish-${{ hashFiles('dev/fetch_stockfish.ps1') }}
+
+      - name: Fetch Stockfish for the engine tests
+        shell: pwsh
+        run: ./dev/fetch_stockfish.ps1
+
+      - name: Run tests
+        shell: pwsh
+        run: ./tests/run_tests.ps1
+
+  build:
+    name: Build Windows package
+    runs-on: windows-latest
+    needs: test
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-godot
+
+      - name: Cache Stockfish
+        uses: actions/cache@v4
+        with:
+          path: |
+            bin/stockfish.exe
+            bin/Copying.txt
+            bin/AUTHORS
+            bin/STOCKFISH.txt
+          key: stockfish-${{ hashFiles('dev/fetch_stockfish.ps1') }}
+
+      - name: Build
+        shell: pwsh
+        run: ./dev/build.ps1 -Version 0.0.0
+
+      - name: Check the package
+        shell: pwsh
+        run: |
+          foreach ($name in "NeoChess.exe", "stockfish.exe", "Copying.txt", "AUTHORS", "STOCKFISH.txt") {
+            $file = Join-Path "dist/NeoChess" $name
+            if (-not (Test-Path $file)) { throw "Missing $name in the package." }
+            "{0}  {1:N1} MB" -f $name, ((Get-Item $file).Length / 1MB)
+          }
+          $out = & "dist/NeoChess/stockfish.exe" compiler
+          if (-not ($out -join " ").Contains("Stockfish")) { throw "Bundled Stockfish does not run." }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeoChess-windows
+          path: dist/NeoChess
+          retention-days: 7
