@@ -235,7 +235,7 @@ repository secret, and set the repository variables `SIGNPATH_ORGANIZATION_ID`,
 
 ## Credits and licenses
 
-- NeoChess source code: [MIT](LICENSE).
+- NeoChess source code: [MIT](LICENSE). Third-party notices are in [THIRD_PARTY.md](THIRD_PARTY.md).
 - [Stockfish](https://stockfishchess.org): GNU GPL v3, by the Stockfish
   developers. Downloaded or bundled as a separate program, never linked in.
 - Chess piece drawings: the Cburnett set by Colin M. L. Burnett, triple-licensed

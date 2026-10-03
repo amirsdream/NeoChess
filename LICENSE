@@ -19,7 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-This license covers the NeoChess source code only. The chess piece drawings in
-pieces/ are by Colin M. L. Burnett (see pieces/CREDITS.txt). Stockfish is a
-separate program under the GNU GPL v3 and is not part of this repository.
