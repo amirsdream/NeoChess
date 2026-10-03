@@ -34,8 +34,12 @@ while it thinks, or play a friend on the same computer.
 
 ### Play
 
-1. Download the latest release zip and unpack it anywhere.
-2. Run `NeoChess.exe`.
+1. Download `NeoChess-<version>-windows-x64.zip` from the
+   [latest release](https://github.com/amirsdream/NeoChess/releases/latest).
+2. Unzip it anywhere.
+3. Run `NeoChess.exe`.
+
+There is no installer and nothing else to set up. Stockfish is already in the zip.
 
 Release builds include Stockfish next to the exe. If you have only the exe, or
 you build from source, NeoChess detects that the engine is missing and offers a
@@ -146,6 +150,28 @@ The script finds Godot from `-Godot <path>`, then `$env:GODOT`, then `PATH`.
 
 If you ship the engine, keep `Copying.txt`, `AUTHORS` and `STOCKFISH.txt` beside
 it. `build.ps1` does this for you.
+
+### Continuous integration and releases
+
+GitHub Actions does the same work on a clean Windows machine:
+
+- **CI** (`.github/workflows/ci.yml`) runs on every push to `main` and on pull
+  requests. It installs Godot (checksum-verified), fetches Stockfish, runs the whole
+  test suite, then builds the package and checks that the bundled engine starts. The
+  build is kept as a 7 day artifact.
+- **Release** (`.github/workflows/release.yml`) runs when you push a version tag. It
+  repeats the tests, stamps the version into the exe, and publishes a GitHub release
+  with `NeoChess-<version>-windows-x64.zip` and its `.sha256` file.
+
+To ship a version:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+You can also start **Release** by hand from the Actions tab to get the zip as an
+artifact without publishing anything.
 
 ## How it works
 
