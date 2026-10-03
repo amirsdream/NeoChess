@@ -1,0 +1,11 @@
+Staunton piece drawings by Colin M. L. Burnett.
+
+The SVG outlines in this folder are the Cburnett chess set, used here as
+recolorable silhouettes. They are triple-licensed under the GNU Free
+Documentation License, the BSD license, and the GNU General Public License.
+Source: https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces
+A matching copy is published with Lichess under GPLv2 or later:
+https://github.com/lichess-org/lila/tree/master/public/piece/cburnett
+
+NeoChess recolors the outlines at runtime. It does not include the original
+colored PNG renders.

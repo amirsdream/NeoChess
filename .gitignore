@@ -1,0 +1,22 @@
+# Godot
+.godot/
+*.translation
+export.cfg
+export_credentials.cfg
+
+# Local tooling (Godot binaries, scratch files, screenshots)
+.tools/
+
+# Build output
+dist/
+
+# Stockfish is GPLv3 and is fetched, never committed (dev/fetch_stockfish.ps1)
+bin/*
+!bin/run_stockfish.ps1
+
+# Editor and OS
+.vscode/
+.idea/
+*.tmp
+Thumbs.db
+Desktop.ini
