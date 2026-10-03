@@ -29,7 +29,9 @@ runs:
         $work = Join-Path $env:RUNNER_TEMP "godot-download"
         New-Item -ItemType Directory -Force -Path $work | Out-Null
 
-        $sums = (Invoke-WebRequest -Uri "$base/SHA512-SUMS.txt" -UseBasicParsing).Content -split "`n"
+        $raw = (Invoke-WebRequest -Uri "$base/SHA512-SUMS.txt" -UseBasicParsing).Content
+        $text = if ($raw -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($raw) } else { [string]$raw }
+        $sums = $text -split "\r?\n"
 
         function Get-Verified([string]$name) {
           $path = Join-Path $work $name
