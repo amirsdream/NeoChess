@@ -101,6 +101,21 @@ The same download button lives under **Settings, Engine**. Nothing is sent to
 anyone except the request to GitHub, and nothing is installed outside the
 NeoChess user folder.
 
+### Verifying a download and code signing
+
+Every release includes a `.sha256` file. To check the zip:
+
+```powershell
+(Get-FileHash .\NeoChess-1.0.0-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+# compare with the contents of NeoChess-1.0.0-windows-x64.zip.sha256
+```
+
+Release builds are made by the public GitHub Actions workflow in this repository.
+They are **not code-signed yet**, so Windows SmartScreen may show "Windows protected
+your PC" the first time. Choose **More info, Run anyway**, or build it yourself from
+source. Signing through the [SignPath Foundation](https://signpath.org) is prepared in
+`release.yml` and `.signpath/` and switches on when the repository has the SignPath
+settings (see [Contributing](#contributing)).
 ## Building from source
 
 You need [Godot 4.7.2](https://godotengine.org/download) (the standard build,
@@ -206,6 +221,17 @@ occasionally comment on that, and it is safe to allow.
 - **The engine seems slow or loses time on a clock**: raise *Move overhead*
   under Settings, Engine.
 - **No live lines**: switch the *Live* toggle on in the Engine analysis card.
+
+## Contributing
+
+Issues and pull requests are welcome. Run `./tests/run_tests.ps1` before sending a
+change; CI runs the same tests. Keep new code covered by a test where it can be.
+
+Maintainers: to turn on code signing, apply for free open-source signing at
+[signpath.org/apply](https://signpath.org/apply.html), add the `SIGNPATH_API_TOKEN`
+repository secret, and set the repository variables `SIGNPATH_ORGANIZATION_ID`,
+`SIGNPATH_PROJECT_SLUG` (default `NeoChess`) and `SIGNPATH_SIGNING_POLICY_SLUG`
+(default `release-signing`). The next tagged release is then signed automatically.
 
 ## Credits and licenses
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tells SignPath which file in the uploaded package to sign. The package is the
+     contents of dist/NeoChess, so NeoChess.exe sits at the root of the zip.
+     Stockfish is a separate program and keeps its own upstream build. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="NeoChess.exe">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

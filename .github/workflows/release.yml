@@ -45,7 +45,47 @@ jobs:
 
       - name: Build the package
         shell: pwsh
-        run: ./dev/build.ps1 -Version "${{ steps.version.outputs.value }}" -Zip
+        run: ./dev/build.ps1 -Version "${{ steps.version.outputs.value }}"
+
+      # Code signing is optional and switches on by itself once the repository
+      # variable SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN exist.
+      # See "Code signing" in the README.
+      - name: Upload the unsigned package
+        id: unsigned
+        if: vars.SIGNPATH_ORGANIZATION_ID != '' && github.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-package
+          path: dist/NeoChess
+          retention-days: 1
+
+      - name: Sign NeoChess.exe with SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != '' && github.ref_type == 'tag'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'NeoChess' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+          parameters: |
+            Version: "${{ steps.version.outputs.value }}"
+
+      - name: Use the signed exe
+        if: vars.SIGNPATH_ORGANIZATION_ID != '' && github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          Copy-Item -LiteralPath signed/NeoChess.exe -Destination dist/NeoChess/NeoChess.exe -Force
+          $signature = Get-AuthenticodeSignature dist/NeoChess/NeoChess.exe
+          Write-Host "Signature: $($signature.Status), signer: $($signature.SignerCertificate.Subject)"
+          if ($signature.Status -ne "Valid") { throw "NeoChess.exe is not validly signed." }
+
+      - name: Zip the package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/NeoChess -DestinationPath dist/NeoChess-windows.zip
 
       - name: Verify the package
         shell: pwsh
