@@ -54,7 +54,7 @@ $shots = @(
 
 foreach ($shot in $shots) {
     Remove-Item -LiteralPath $preview -ErrorAction SilentlyContinue
-    $arguments = @("--path", $root, "--resolution", "1180x900", "--", "--shot") + $shot[1]
+    $arguments = @("--path", $root, "--resolution", "1180x1000", "--", "--shot") + $shot[1]
     $process = Start-Process -FilePath $Godot -ArgumentList $arguments -PassThru
     if (-not $process.WaitForExit(90000)) { $process.Kill(); throw "Timed out making $($shot[0])." }
     if (-not (Test-Path $preview)) { throw "No picture was made for $($shot[0])." }

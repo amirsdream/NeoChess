@@ -23,7 +23,7 @@ config/windows_native_icon="res://icon.ico"
 [display]
 
 window/size/viewport_width=1180
-window/size/viewport_height=900
+window/size/viewport_height=1000
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/size/min_width=980

@@ -35,7 +35,7 @@ const MENU_SAVE := 2
 const MENU_PASTE := 3
 const MENU_OPEN := 4
 const MENU_LIBRARY := 5
-const BOOK_ROWS := 7
+const BOOK_ROWS := 5
 const STRIP_H := 60.0
 const STRIP_GAP := 8.0
 
@@ -553,13 +553,19 @@ func _make_strip() -> Dictionary:
 
 func _build_play_panel() -> Control:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 12)
-	col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 8)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.add_child(_build_engine_card())
 	col.add_child(_build_book_card())
 	col.add_child(_build_moves_card())
 	col.add_child(_build_actions())
-	return col
+	# Everything is meant to fit the window. If a font or a long list makes the
+	# column taller than the window, it scrolls instead of being cut off.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.add_child(col)
+	return scroll
 
 
 func _build_engine_card() -> Control:
@@ -590,15 +596,15 @@ func _build_engine_card() -> Control:
 	col.add_child(lines_hint)
 
 	branches_box = VBoxContainer.new()
-	branches_box.add_theme_constant_override("separation", 6)
+	branches_box.add_theme_constant_override("separation", 4)
 	col.add_child(branches_box)
 	for i in 5:
 		var card := PanelContainer.new()
 		var card_style := _flat(C_RAISED, 10)
 		card_style.content_margin_left = 12
 		card_style.content_margin_right = 12
-		card_style.content_margin_top = 6
-		card_style.content_margin_bottom = 6
+		card_style.content_margin_top = 3
+		card_style.content_margin_bottom = 4
 		card.add_theme_stylebox_override("panel", card_style)
 		var card_col := VBoxContainer.new()
 		card_col.add_theme_constant_override("separation", 0)
@@ -613,22 +619,24 @@ func _build_engine_card() -> Control:
 		line_head.add_child(rank)
 		var score := Label.new()
 		score.text = "–"
-		score.add_theme_font_size_override("font_size", 18)
-		score.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		score.add_theme_font_size_override("font_size", 16)
+		score.custom_minimum_size = Vector2(60, 0)
 		line_head.add_child(score)
-		var depth := Label.new()
-		depth.add_theme_font_size_override("font_size", 13)
-		_tint(depth, "font_color", Color("8a7b6a"))
-		line_head.add_child(depth)
 		var line_moves := Label.new()
 		line_moves.clip_text = true
 		line_moves.autowrap_mode = TextServer.AUTOWRAP_OFF
 		line_moves.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		line_moves.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		line_moves.mouse_filter = Control.MOUSE_FILTER_PASS
-		line_moves.add_theme_font_size_override("font_size", 14)
+		line_moves.add_theme_font_size_override("font_size", 13)
 		_tint(line_moves, "font_color", Color("e8dccb"))
-		card_col.add_child(line_moves)
+		line_head.add_child(line_moves)
+		var depth := Label.new()
+		depth.add_theme_font_size_override("font_size", 12)
+		depth.custom_minimum_size = Vector2(52, 0)
+		depth.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_tint(depth, "font_color", Color("8a7b6a"))
+		line_head.add_child(depth)
 		branches_box.add_child(card)
 		branch_cards.append({"score": score, "depth": depth, "moves": line_moves})
 	return lines_box
@@ -687,7 +695,7 @@ func _build_moves_card() -> Control:
 	moves_label.meta_underlined = false
 	moves_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	moves_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	moves_label.custom_minimum_size = Vector2(0, 72)
+	moves_label.custom_minimum_size = Vector2(0, 64)
 	moves_label.meta_clicked.connect(_on_move_clicked)
 	col.add_child(moves_label)
 
@@ -1538,13 +1546,13 @@ func _refresh() -> void:
 	var analysis := show_lines_check.button_pressed
 	branches_box.visible = analysis
 	if reviewing and analysis:
-		lines_hint.text = "Stockfish is analysing this position until you leave it. Its three best moves are drawn on the board (thick, medium, thin). A plus means good for %s." % ("you" if _versus() else "White")
+		lines_hint.text = "Analysing this position. Blue arrows show its three best moves. A plus is good for %s." % ("you" if _versus() else "White")
 	elif reviewing:
 		lines_hint.text = "Analysis is stopped. Switch on Live to analyse this position."
 	elif analysis:
-		lines_hint.text = "Stockfish's five best lines, live, and its three best moves on the board (thick, medium, thin). A plus means good for %s." % ("you" if _versus() else "White")
+		lines_hint.text = "Five best lines, live; blue arrows show the best three. A plus is good for %s." % ("you" if _versus() else "White")
 	else:
-		lines_hint.text = "Switch on Live to watch Stockfish's five best lines, and its three best moves as arrows on the board."
+		lines_hint.text = "Switch on Live for Stockfish's best lines and arrows."
 	if reviewing:
 		if shown.state_of(shown.legal_moves()) == "checkmate":
 			_set_eval(0.0 if shown.white_to_move else 1.0, "Mate", false)
@@ -2569,7 +2577,7 @@ func _build_book_card() -> Control:
 		var row := Button.new()
 		row.flat = true
 		row.focus_mode = Control.FOCUS_NONE
-		row.custom_minimum_size = Vector2(0, 30)
+		row.custom_minimum_size = Vector2(0, 28)
 		row.visible = false
 		row.pressed.connect(_on_book_row.bind(i))
 		var stack := VBoxContainer.new()
@@ -2585,7 +2593,7 @@ func _build_book_card() -> Control:
 		var name_label := Label.new()
 		name_label.clip_text = true
 		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		name_label.add_theme_font_size_override("font_size", 12)
+		name_label.add_theme_font_size_override("font_size", 11)
 		name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_tint(name_label, "font_color", C_MUTED)
 		stack.add_child(name_label)
@@ -2735,7 +2743,7 @@ func _show_book(rows: Array, hint: String) -> void:
 		(entry["name"] as Label).text = str(named.get("name", ""))
 		(entry["name"] as Label).visible = not named.is_empty()
 		(entry["name"] as Label).tooltip_text = OpeningNames.label(named)
-		row_button.custom_minimum_size = Vector2(0, 46 if not named.is_empty() else 30)
+		row_button.custom_minimum_size = Vector2(0, 38 if not named.is_empty() else 28)
 		(entry["count"] as Label).text = _compact_count(games)
 		(entry["bar"] as ResultBar).set_counts(white, draw, black)
 		var score := (float(white) + float(draw) * 0.5) / float(maxi(games, 1))

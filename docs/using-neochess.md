@@ -1,6 +1,7 @@
 # Using NeoChess
 
 - [Playing a game](#playing-a-game)
+- [The window](#the-window)
 - [Controls](#controls)
 - [Engine analysis and the Live switch](#engine-analysis-and-the-live-switch)
 - [Which opening is this?](#which-opening-is-this)
@@ -33,6 +34,10 @@ needs no engine. Switching the opponent starts a new game.
 A game ends on checkmate, stalemate, threefold repetition, the fifty-move rule or
 insufficient material. When it ends, or when you start a new game over an
 unfinished one, it is saved to your [library](game-library.md).
+
+## The window
+
+NeoChess opens at 1180 x 1000 so everything fits: the board, the engine lines, the opening book, the move list and the buttons. You can resize the window freely. The whole layout scales with it, so nothing is cut off on a smaller screen. If a font or a long list ever makes the right-hand column taller than the window, that column gets a scroll bar instead of losing its bottom buttons.
 
 ## Controls
 
