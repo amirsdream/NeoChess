@@ -28,6 +28,14 @@ var pal := {
 var palette_key := -1
 var bindings := {}
 const SIDEBAR_W := 380.0
+const ANALYSIS_DELAY := 0.3
+const MENU_COPY_PGN := 0
+const MENU_COPY_FEN := 1
+const MENU_SAVE := 2
+const MENU_PASTE := 3
+const MENU_OPEN := 4
+const MENU_LIBRARY := 5
+const BOOK_ROWS := 7
 const STRIP_H := 60.0
 const STRIP_GAP := 8.0
 
@@ -54,7 +62,9 @@ var board_flipped := false
 var eval_tween: Tween
 var moves_label: RichTextLabel
 var mode_opt: OptionButton
-var color_opt: OptionButton
+# The side you play against Stockfish. It is chosen when a new game starts.
+var human_white := true
+var side_box: PanelContainer
 var skill_slider: HSlider
 var time_slider: HSlider
 var skill_label: Label
@@ -88,10 +98,7 @@ var lines_box: PanelContainer
 var lines_hint: Label
 var branches_box: VBoxContainer
 var branch_cards: Array = []
-var lines_poll := 0.0
-var stream_offset := 0
-var stream_partial := ""
-var stream_queue: PackedStringArray = PackedStringArray()
+var pending_info: Dictionary = {}
 var new_btn: Button
 var undo_btn: Button
 var flip_btn: Button
@@ -102,6 +109,39 @@ var legal: Array = []
 var state := ""
 var played: Array = []
 var sans: Array[String] = []
+var start_fen := Pgn.START_FEN
+var start_black := false
+var start_number := 1
+var game_tags: Dictionary = {}
+var game_date := ""
+var recorded_result := ""
+var view_ply := -1
+var view_game: ChessGame
+var engine: UciEngine
+var analysis_running := false
+var analysis_pending := false
+var analysis_delay := 0.0
+# The position Stockfish is analysing in the live game (while it is your turn),
+# or empty when no live analysis is running.
+var live_fen := ""
+# The Live switch before a review turned it on (-1 when not reviewing). Reviewing
+# analyses while Live is on; switching it off stops the engine.
+var live_before_review := -1
+# Test and screenshot runs must never overwrite the player's saved settings.
+var settings_locked := false
+var saved_eval_share := 0.5
+var saved_eval_text := "0.0"
+var review_bar: HBoxContainer
+var review_label: Label
+var nav_buttons: Array = []
+var menu_btn: MenuButton
+var save_dialog: FileDialog
+var open_dialog: FileDialog
+var notice_dialog: AcceptDialog
+var toast: PanelContainer
+var toast_label: Label
+var toast_tween: Tween
+var last_dir := ""
 var selected := -1
 var pending_promo: Array = []
 var engine_error := ""
@@ -115,15 +155,36 @@ var engine_download_btn: Button
 var setup_error := ""
 var engine_busy := false
 var animating := false
-var think_token := 0
-var thread: Thread
 var screenshot := false
 var no_engine := false
+
+# Game library (SQLite): your own games, imported databases and the opening book.
+var library_path := ""
+var library_store: GameStore
+var library_view: LibraryView
+var archive_enabled := true
+var archivable := false
+var archive_id := 0
+var archived_key := ""
+var book_query: BookQuery
+var book_check: CheckButton
+var book_card: PanelContainer
+var book_source_opt: OptionButton
+var book_source_ids: Array = [0]
+var book_source_name := ""
+var book_rows_box: VBoxContainer
+var book_hint: Label
+var book_title: Label
+var book_key := ""
+var book_rows: Array = []
+var book_bars: Array = []
 
 
 func _ready() -> void:
 	screenshot = "--shot" in OS.get_cmdline_user_args()
 	no_engine = "--no-engine" in OS.get_cmdline_user_args()
+	settings_locked = screenshot or no_engine
+	archive_enabled = not settings_locked
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	theme = _make_theme()
 	_build_ui()
@@ -137,6 +198,10 @@ func _ready() -> void:
 	_apply_time_mode()
 	_connect_signals()
 	_refresh()
+	for arg in OS.get_cmdline_user_args():
+		if str(arg).begins_with("--check-library="):
+			_check_library(str(arg).get_slice("=", 1))
+			return
 	if screenshot:
 		_prepare_shot()
 	elif _engine_should_move():
@@ -144,8 +209,12 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if library_view != null and library_view.visible:
+		return
 	if event.is_action_pressed("ui_cancel"):
-		if settings_open:
+		if side_box != null and side_box.visible:
+			_hide_side_box()
+		elif settings_open:
 			_set_settings_open(false)
 		else:
 			selected = -1
@@ -155,24 +224,35 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey:
 		var key := event as InputEventKey
+		if key.pressed and not key.echo and key.is_command_or_control_pressed() and not key.alt_pressed:
+			if key.keycode == KEY_C:
+				_on_menu(MENU_COPY_FEN if key.shift_pressed else MENU_COPY_PGN)
+				get_viewport().set_input_as_handled()
+			elif key.keycode == KEY_V:
+				_on_menu(MENU_PASTE)
+				get_viewport().set_input_as_handled()
+			return
 		if not key.pressed or key.echo or key.ctrl_pressed or key.alt_pressed or key.meta_pressed:
 			return
 		match key.keycode:
 			KEY_N:
-				_on_new_game()
+				_ask_new_game()
 			KEY_U:
 				_on_undo()
 			KEY_F:
 				_on_flip()
 			KEY_S:
 				_set_settings_open(not settings_open)
+			KEY_L:
+				_open_library()
 
 
 func _exit_tree() -> void:
-	think_token += 1
-	if thread != null and thread.is_started():
-		thread.wait_to_finish()
-		thread = null
+	_archive_game()
+	if library_store != null:
+		library_store.close()
+	if engine != null:
+		engine.shutdown()
 
 
 func _build_ui() -> void:
@@ -213,6 +293,8 @@ func _build_ui() -> void:
 	board_area.add_child(bottom_strip["panel"] as Control)
 	promo_box = _build_promo()
 	board_area.add_child(promo_box)
+	side_box = _build_side_box()
+	board_area.add_child(side_box)
 
 	var side := VBoxContainer.new()
 	side.custom_minimum_size = Vector2(SIDEBAR_W, 0)
@@ -230,10 +312,25 @@ func _build_ui() -> void:
 	dialog = FileDialog.new()
 	dialog.access = FileDialog.ACCESS_FILESYSTEM
 	dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	dialog.filters = PackedStringArray(["*.exe ; Executable", "* ; All files"])
+	if EngineSetup.platform() == "windows":
+		dialog.filters = PackedStringArray(["*.exe ; Executable", "* ; All files"])
+	else:
+		dialog.filters = PackedStringArray(["* ; All files"])
 	dialog.title = "Select Stockfish"
 	dialog.file_selected.connect(_on_engine_file)
 	add_child(dialog)
+	library_view = LibraryView.new(self)
+	add_child(library_view)
+	library_view.open_game.connect(_open_library_game)
+	library_view.message.connect(_notify)
+	library_view.sources_changed.connect(_on_sources_changed)
+	library_view.games_deleted.connect(_on_games_deleted)
+	library_view.imported.connect(_on_imported)
+	library_view.closed.connect(_refresh)
+	book_query = BookQuery.new()
+	add_child(book_query)
+	book_query.answered.connect(_on_book_answer)
+	_build_game_io()
 
 	var bundled := _bundled_engine()
 	if FileAccess.file_exists(bundled):
@@ -348,6 +445,23 @@ func _build_header() -> Control:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
 
+	menu_btn = MenuButton.new()
+	menu_btn.text = "Game"
+	menu_btn.flat = false
+	menu_btn.custom_minimum_size = Vector2(96, 40)
+	menu_btn.tooltip_text = "Import or export a game (PGN) or a position (FEN)"
+	var menu := menu_btn.get_popup()
+	menu.add_item("Copy game (PGN)", MENU_COPY_PGN)
+	menu.add_item("Copy position (FEN)", MENU_COPY_FEN)
+	menu.add_item("Save game as…", MENU_SAVE)
+	menu.add_separator()
+	menu.add_item("Paste game or position", MENU_PASTE)
+	menu.add_item("Open game file…", MENU_OPEN)
+	menu.add_separator()
+	menu.add_item("Game library…", MENU_LIBRARY)
+	menu.id_pressed.connect(_on_menu)
+	row.add_child(menu_btn)
+
 	settings_btn = Button.new()
 	settings_btn.text = "Settings"
 	settings_btn.toggle_mode = true
@@ -437,6 +551,7 @@ func _build_play_panel() -> Control:
 	col.add_theme_constant_override("separation", 12)
 	col.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(_build_engine_card())
+	col.add_child(_build_book_card())
 	col.add_child(_build_moves_card())
 	col.add_child(_build_actions())
 	return col
@@ -461,6 +576,10 @@ func _build_engine_card() -> Control:
 	show_lines_check.text = "Live"
 	show_lines_check.tooltip_text = "Show Stockfish's five best lines while it thinks."
 	head.add_child(show_lines_check)
+	book_check = CheckButton.new()
+	book_check.text = "Book"
+	book_check.tooltip_text = "Show what was played in the games of your library after these moves."
+	head.add_child(book_check)
 
 	lines_hint = _muted("")
 	col.add_child(lines_hint)
@@ -517,20 +636,58 @@ func _build_moves_card() -> Control:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
 	card.add_child(col)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 4)
+	col.add_child(head)
 	var title := Label.new()
 	title.text = "Moves"
 	title.add_theme_font_size_override("font_size", 17)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tint(title, "font_color", C_GOLD_SOFT)
-	col.add_child(title)
+	head.add_child(title)
+	var nav_specs := [
+		["«", "First position (Home)", "_nav_first"],
+		["‹", "Previous move (Left arrow)", "_nav_prev"],
+		["›", "Next move (Right arrow)", "_nav_next"],
+		["»", "Back to the latest position (End)", "_nav_last"],
+	]
+	for spec in nav_specs:
+		var nav := Button.new()
+		nav.text = str(spec[0])
+		nav.tooltip_text = str(spec[1])
+		nav.custom_minimum_size = Vector2(38, 30)
+		nav.focus_mode = Control.FOCUS_NONE
+		nav.pressed.connect(Callable(self, str(spec[2])))
+		head.add_child(nav)
+		nav_buttons.append(nav)
 	moves_label = RichTextLabel.new()
 	moves_label.bbcode_enabled = true
 	moves_label.scroll_active = true
 	moves_label.scroll_following = true
-	moves_label.selection_enabled = true
+	moves_label.selection_enabled = false
+	moves_label.meta_underlined = false
 	moves_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	moves_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	moves_label.custom_minimum_size = Vector2(0, 72)
+	moves_label.meta_clicked.connect(_on_move_clicked)
 	col.add_child(moves_label)
+
+	review_bar = HBoxContainer.new()
+	review_bar.add_theme_constant_override("separation", 8)
+	review_bar.visible = false
+	col.add_child(review_bar)
+	review_label = Label.new()
+	review_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	review_label.clip_text = true
+	review_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_tint(review_label, "font_color", C_MUTED)
+	review_bar.add_child(review_label)
+	var play_here := Button.new()
+	play_here.text = "Play from here"
+	play_here.tooltip_text = "Drop the later moves and continue from this position"
+	play_here.focus_mode = Control.FOCUS_NONE
+	play_here.pressed.connect(_play_from_here)
+	review_bar.add_child(play_here)
 	return card
 
 
@@ -594,6 +751,52 @@ func _build_promo() -> PanelContainer:
 	cancel.text = "Cancel"
 	cancel.custom_minimum_size = Vector2(76, 40)
 	cancel.pressed.connect(_cancel_promo)
+	col.add_child(cancel)
+	return box
+
+
+# The "New game" question: which side do you want to play?
+func _build_side_box() -> PanelContainer:
+	var box := PanelContainer.new()
+	box.visible = false
+	var style := _flat(C_RAISED, 14)
+	_border(style, C_GOLD)
+	style.set_border_width_all(2)
+	style.content_margin_left = 20
+	style.content_margin_right = 20
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
+	box.add_theme_stylebox_override("panel", style)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	box.add_child(col)
+	var title := Label.new()
+	title.text = "New game"
+	title.add_theme_font_size_override("font_size", 20)
+	_tint(title, "font_color", C_GOLD_SOFT)
+	col.add_child(title)
+	var prompt := Label.new()
+	prompt.text = "Play as"
+	_tint(prompt, "font_color", Color("a99c8a"))
+	col.add_child(prompt)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	col.add_child(row)
+	for choice in ["White", "Random", "Black"]:
+		var button := Button.new()
+		button.text = choice
+		button.custom_minimum_size = Vector2(92, 46)
+		button.pressed.connect(_on_side_chosen.bind(choice))
+		row.add_child(button)
+	var hint := Label.new()
+	hint.text = "As Black, Stockfish makes the first move."
+	hint.add_theme_font_size_override("font_size", 13)
+	_tint(hint, "font_color", Color("8a7b6a"))
+	col.add_child(hint)
+	var cancel := Button.new()
+	cancel.text = "Cancel"
+	cancel.custom_minimum_size = Vector2(0, 38)
+	cancel.pressed.connect(_hide_side_box)
 	col.add_child(cancel)
 	return box
 
@@ -678,11 +881,6 @@ func _build_play_page() -> Control:
 	mode_opt.add_item("Versus Stockfish")
 	mode_opt.add_item("Pass and play")
 	page.add_child(_setting("Opponent", mode_opt))
-
-	color_opt = OptionButton.new()
-	color_opt.add_item("White")
-	color_opt.add_item("Black")
-	page.add_child(_setting("Your side", color_opt, "The board turns to match. Use Flip on the board to turn it any time."))
 
 	skill_label = _muted("Level 8")
 	skill_slider = HSlider.new()
@@ -876,9 +1074,8 @@ func _connect_signals() -> void:
 	installer.finished.connect(_on_download_finished)
 	board_view.square_clicked.connect(_on_square)
 	board_area.resized.connect(_layout_board_area)
-	mode_opt.item_selected.connect(_on_option_changed)
-	color_opt.item_selected.connect(_on_option_changed)
-	new_btn.pressed.connect(_on_new_game)
+	mode_opt.item_selected.connect(_on_mode_changed)
+	new_btn.pressed.connect(_ask_new_game)
 	undo_btn.pressed.connect(_on_undo)
 	flip_btn.pressed.connect(_on_flip)
 	settings_btn.toggled.connect(func(on: bool) -> void: _set_settings_open(on))
@@ -890,10 +1087,21 @@ func _connect_signals() -> void:
 		_save_settings()
 		_refresh()
 	)
-	show_lines_check.toggled.connect(func(_on: bool) -> void:
+	show_lines_check.toggled.connect(func(on: bool) -> void:
+		if view_ply >= 0:
+			live_before_review = 1 if on else 0
+			if on:
+				_schedule_analysis()
+			else:
+				_pause_review_analysis()
 		_save_settings()
 		_refresh()
 	)
+	book_check.toggled.connect(func(_on: bool) -> void:
+		_save_settings()
+		_refresh()
+	)
+	book_source_opt.item_selected.connect(_on_book_source)
 	skill_slider.drag_ended.connect(func(_changed: bool) -> void: _save_settings())
 	time_slider.drag_ended.connect(func(_changed: bool) -> void: _save_settings())
 	threads_slider.value_changed.connect(func(_v: float) -> void: _sync_engine_controls())
@@ -954,22 +1162,54 @@ func _layout_board_area() -> void:
 	var centre := Vector2(left + reserve + board_side * 0.5, top + STRIP_H + STRIP_GAP + board_side * 0.5)
 	promo_box.reset_size()
 	promo_box.position = centre - promo_box.size * 0.5
+	side_box.reset_size()
+	side_box.position = centre - side_box.size * 0.5
 
 
 
-func _on_option_changed(_index: int) -> void:
-	think_token += 1
-	board_flipped = false
-	selected = -1
+# Changing the opponent starts a new game. Against Stockfish it asks which side
+# you want first, as chess sites do.
+func _on_mode_changed(_index: int) -> void:
+	_ask_new_game()
+
+
+# The New game button: ask for a side when playing Stockfish, otherwise start.
+func _ask_new_game() -> void:
+	if animating:
+		await board_view.animation_finished
+	if not _versus():
+		_start_new_game(human_white)
+		return
 	_cancel_promo()
+	selected = -1
+	side_box.visible = true
+	_refresh()
+
+
+func _hide_side_box() -> void:
+	side_box.visible = false
+	_refresh()
+
+
+func _on_side_chosen(choice: String) -> void:
+	var white := randi() % 2 == 0 if choice == "Random" else choice == "White"
+	_start_new_game(white)
+
+
+# Starts a game with you on the given side. As White you move first; as Black
+# Stockfish thinks and makes the first move, then it is your turn.
+func _start_new_game(white: bool) -> void:
+	side_box.visible = false
+	human_white = white
+	board_flipped = false
 	_save_settings()
+	_reset_game(Pgn.START_FEN)
 	_refresh()
 	if _engine_should_move():
 		_start_engine()
 
-
 func _on_square(sq: int) -> void:
-	if animating or engine_busy or promo_box.visible or state != "" or not _human_to_move():
+	if view_ply >= 0 or animating or engine_busy or promo_box.visible or side_box.visible or state != "" or not _human_to_move():
 		return
 	if selected < 0:
 		_select_if_piece(sq)
@@ -1009,10 +1249,13 @@ func _cancel_promo() -> void:
 
 
 func _commit(move: Dictionary) -> void:
-	if animating or engine_busy:
+	if animating or engine_busy or view_ply >= 0:
 		return
+	_stop_live()
 	_cancel_promo()
 	selected = -1
+	recorded_result = ""
+	archivable = true
 	_charge_turn()
 	var san := game.to_san(move)
 	var origin := int(move.from)
@@ -1053,9 +1296,33 @@ func _commit(move: Dictionary) -> void:
 
 func _on_new_game() -> void:
 	if animating:
-		return
-	think_token += 1
-	game.reset()
+		await board_view.animation_finished
+	_reset_game(Pgn.START_FEN)
+	_refresh()
+	if _engine_should_move():
+		_start_engine()
+
+
+# Clears everything and sets the board up from a FEN. Callers refresh and, when
+# it is the engine's turn, start it afterwards.
+func _reset_game(fen: String) -> void:
+	_archive_game()
+	archivable = false
+	archive_id = 0
+	archived_key = ""
+	side_box.visible = false
+	_end_review()
+	_cancel_search()
+	if engine != null:
+		engine.new_game()
+	game.load_fen(fen)
+	start_fen = fen
+	start_black = not game.white_to_move
+	start_number = maxi(int(game.fullmove), 1)
+	game_tags = {}
+	var today := Time.get_date_dict_from_system()
+	game_date = "%04d.%02d.%02d" % [int(today.year), int(today.month), int(today.day)]
+	recorded_result = ""
 	played.clear()
 	sans.clear()
 	_clear_branches()
@@ -1065,13 +1332,10 @@ func _on_new_game() -> void:
 	selected = -1
 	engine_error = ""
 	_cancel_promo()
-	_refresh()
-	if _engine_should_move():
-		_start_engine()
 
 
 func _on_undo() -> void:
-	if animating or engine_busy:
+	if animating or engine_busy or view_ply >= 0:
 		return
 	if promo_box.visible:
 		_cancel_promo()
@@ -1079,7 +1343,6 @@ func _on_undo() -> void:
 		return
 	if played.is_empty():
 		return
-	think_token += 1
 	var steps := 1
 	if _versus() and played.size() >= 2 and _human_to_move():
 		steps = 2
@@ -1097,7 +1360,8 @@ func _on_undo() -> void:
 
 func _rebuild() -> void:
 	var moves: Array = played.duplicate()
-	game.reset()
+	game.load_fen(start_fen)
+	recorded_result = ""
 	for move in moves:
 		game.make_move(move)
 	selected = -1
@@ -1108,51 +1372,96 @@ func _rebuild() -> void:
 func _start_engine() -> void:
 	if engine_busy or animating or screenshot or state != "":
 		return
-	var path := _resolved_engine_path()
-	if path.is_empty():
+	if _resolved_engine_path().is_empty():
 		engine_error = "Stockfish was not found. Download it, choose the file, or switch to pass and play."
 		_refresh()
 		return
+	if not _ensure_engine():
+		return
 	engine_busy = true
 	engine_error = ""
+	live_fen = ""
 	_clear_branches()
-	lines_poll = 0.0
-	stream_offset = 0
-	stream_partial = ""
-	stream_queue = PackedStringArray()
-	var stream_path := StockfishUci.stream_log_path()
-	if FileAccess.file_exists(stream_path):
-		DirAccess.remove_absolute(stream_path)
-	think_token += 1
-	var token := think_token
-	var fen := game.to_fen()
+	pending_info.clear()
 	var options := _engine_options()
+	engine.search(game.to_fen(), StockfishUci.go_from_options(options), StockfishUci.engine_settings(options))
 	_refresh()
-	thread = Thread.new()
-	var err := thread.start(_engine_job.bind(token, path, fen, options))
-	if err != OK:
-		engine_busy = false
-		thread = null
-		engine_error = "Could not start Stockfish."
-		_refresh()
 
 
-func _engine_job(token: int, path: String, fen: String, options: Dictionary) -> void:
-	var move := StockfishUci.best_move(path, fen, options)
-	var log := StockfishUci.last_log
-	call_deferred("_finish_engine", token, move, log)
+# Makes sure a UCI engine process is running for the chosen engine file.
+# Failures arrive through _on_engine_failed.
+func _ensure_engine() -> bool:
+	var path := _resolved_engine_path()
+	if path.is_empty():
+		return false
+	if engine == null:
+		engine = UciEngine.new()
+		add_child(engine)
+		engine.info.connect(_on_engine_info)
+		engine.best_move.connect(_on_engine_best_move)
+		engine.failed.connect(_on_engine_failed)
+		engine.started.connect(_on_engine_started)
+	if engine.usable() and engine.path == path:
+		return true
+	return engine.start(path)
 
 
-func _finish_engine(token: int, uci: String, log: String) -> void:
-	if thread != null:
-		thread.wait_to_finish()
-		thread = null
+func _on_engine_started(_name: String) -> void:
+	if engine_label != null:
+		engine_label.text = _engine_caption()
+
+
+func _on_engine_failed(message: String) -> void:
 	engine_busy = false
-	if token != think_token:
-		_refresh()
-		if _engine_should_move():
-			_start_engine()
+	live_fen = ""
+	analysis_running = false
+	analysis_pending = false
+	pending_info.clear()
+	engine_error = message
+	_refresh()
+
+
+# Stops whatever the engine is doing without using the result.
+func _cancel_search() -> void:
+	pending_info.clear()
+	live_fen = ""
+	analysis_running = false
+	analysis_pending = false
+	engine_busy = false
+	if engine != null:
+		engine.stop()
+
+
+func _on_engine_info(entry: Dictionary) -> void:
+	if str(entry["bound"]) != "":
 		return
+	pending_info[int(entry["n"])] = entry
+
+
+# Shows the newest line for each rank. Called once per frame, so a flood of
+# updates from the engine costs no more than one redraw.
+func _flush_info() -> void:
+	if pending_info.is_empty():
+		return
+	var entries := pending_info
+	pending_info = {}
+	var show_lines := show_lines_check.button_pressed
+	for n in entries:
+		var entry := entries[n] as Dictionary
+		if show_lines and int(n) <= 5:
+			_apply_branch(entry)
+		if int(n) == 1:
+			_apply_eval(entry)
+	var lead := entries.get(1, {}) as Dictionary
+	if not lead.is_empty() and engine_label != null:
+		engine_label.text = _engine_caption(lead)
+
+
+func _on_engine_best_move(uci: String) -> void:
+	if not engine_busy:
+		return
+	engine_busy = false
+	_flush_info()
 	if state != "":
 		_refresh()
 		return
@@ -1162,13 +1471,8 @@ func _finish_engine(token: int, uci: String, log: String) -> void:
 			engine_error = "Stockfish did not return a move."
 		else:
 			engine_error = "Stockfish returned %s, which is not legal here." % uci
-		if log.strip_edges().is_empty():
-			engine_error = "Stockfish produced no output. Check the engine path."
 		_refresh()
 		return
-	_read_engine_stream()
-	while not stream_queue.is_empty():
-		_drain_engine_stream(12)
 	_commit(move)
 
 
@@ -1182,39 +1486,60 @@ func _refresh() -> void:
 			target_list.append(int(move.to))
 			if int(game.board[move.to]) != 0 or bool(move.ep):
 				capture_list.append(int(move.to))
+	var reviewing := view_ply >= 0
+	var shown := _pos()
+	var last_index := (view_ply - 1) if reviewing else played.size() - 1
 	var last_a := -1
 	var last_b := -1
-	if not played.is_empty():
-		last_a = int(played[played.size() - 1].from)
-		last_b = int(played[played.size() - 1].to)
-	var checked := game.king_square(game.white_to_move) if game.in_check_stm() else -1
+	if last_index >= 0 and last_index < played.size():
+		last_a = int(played[last_index].from)
+		last_b = int(played[last_index].to)
+	var checked := shown.king_square(shown.white_to_move) if shown.in_check_stm() else -1
 	var hot := {}
-	if _human_to_move() and not animating and not engine_busy and not promo_box.visible and state == "":
+	if not reviewing and _human_to_move() and not animating and not engine_busy and not promo_box.visible and state == "":
 		for move in legal:
 			hot[int(move.from)] = true
 		for sq in target_list:
 			hot[int(sq)] = true
 	board_view.show_last_arrow = show_arrow_check.button_pressed
-	board_view.show_position(game.board, _bottom_is_white(), selected, target_list, capture_list, last_a, last_b, checked, hot)
+	board_view.show_position(shown.board, _bottom_is_white(), selected, target_list, capture_list, last_a, last_b, checked, hot)
 	var analysis := show_lines_check.button_pressed
 	branches_box.visible = analysis
-	if analysis:
+	if reviewing and analysis:
+		lines_hint.text = "Stockfish is analysing this position until you leave it. A plus means good for %s." % ("you" if _versus() else "White")
+	elif reviewing:
+		lines_hint.text = "Analysis is stopped. Switch on Live to analyse this position."
+	elif analysis:
 		lines_hint.text = "Stockfish's five best lines, live. A plus means good for %s." % ("you" if _versus() else "White")
 	else:
 		lines_hint.text = "Switch on Live to watch Stockfish's five best lines while it thinks."
-	if state == "checkmate":
+	if reviewing:
+		if shown.state_of(shown.legal_moves()) == "checkmate":
+			_set_eval(0.0 if shown.white_to_move else 1.0, "Mate", false)
+	elif state == "checkmate":
 		_set_eval(0.0 if game.white_to_move else 1.0, "Mate", false)
 	status_label.text = _status_text()
 	_paint_status()
 	moves_label.text = _moves_bbcode()
+	review_bar.visible = reviewing
+	review_label.text = _review_caption()
+	_update_nav_buttons()
 	engine_label.text = _engine_caption()
 	_update_setup_card()
-	undo_btn.disabled = played.is_empty() or animating or engine_busy
+	undo_btn.disabled = played.is_empty() or animating or engine_busy or reviewing
 	_sync_engine_controls()
-	_scroll_moves.call_deferred()
+	if reviewing:
+		_scroll_to_ply.call_deferred()
+	else:
+		_scroll_moves.call_deferred()
+	if state != "" and not animating:
+		_archive_game()
+	_update_book()
 
 
 func _status_text() -> String:
+	if view_ply >= 0:
+		return "◷  Reviewing, %s" % _ply_name(view_ply)
 	if engine_busy:
 		return "●  Stockfish is thinking…"
 	if engine_error != "":
@@ -1233,7 +1558,10 @@ func _status_text() -> String:
 func _paint_status() -> void:
 	var fg := C_TEXT
 	var bg := C_RAISED
-	if engine_busy:
+	if view_ply >= 0:
+		fg = C_GOLD_SOFT
+		bg = Color(C_GOLD, 0.2)
+	elif engine_busy:
 		fg = C_GOLD_SOFT
 		bg = Color(C_GOLD, 0.2)
 	elif engine_error != "":
@@ -1265,7 +1593,7 @@ func _apply_branch(entry: Dictionary) -> void:
 	var index := int(entry["n"]) - 1
 	if index < 0 or index >= branch_cards.size():
 		return
-	var board := game.clone() as ChessGame
+	var board := _pos().clone() as ChessGame
 	var number := int(board.fullmove)
 	var white_turn := bool(board.white_to_move)
 	var pv: PackedStringArray = entry["pv"]
@@ -1313,22 +1641,26 @@ func _apply_branch(entry: Dictionary) -> void:
 
 func _moves_bbcode() -> String:
 	if sans.is_empty():
-		return "[color=#%s]No moves yet. White moves first.[/color]" % C_DIM.to_html(false)
+		return "[color=#%s]No moves yet. %s moves first.[/color]" % [C_DIM.to_html(false), "Black" if start_black else "White"]
 	var text := "[table=3]"
-	var rows := (sans.size() + 1) / 2
+	var lead := 1 if start_black else 0
+	var rows := (sans.size() + lead + 1) / 2
 	for r in rows:
-		var white_index := r * 2
-		text += "[cell padding=2,3,12,3][color=#%s]%d.[/color][/cell]" % [C_DIM.to_html(false), r + 1]
-		text += "[cell padding=2,3,18,3]%s[/cell]" % _san_cell(white_index)
+		var white_index := r * 2 - lead
+		text += "[cell padding=2,3,12,3][color=#%s]%d.[/color][/cell]" % [C_DIM.to_html(false), start_number + r]
+		var white_text := _san_cell(white_index) if white_index >= 0 else "[color=#%s]…[/color]" % C_DIM.to_html(false)
+		text += "[cell padding=2,3,18,3]%s[/cell]" % white_text
 		var black_text := _san_cell(white_index + 1) if white_index + 1 < sans.size() else ""
 		text += "[cell padding=2,3,2,3]%s[/cell]" % black_text
 	return text + "[/table]"
 
 
 func _san_cell(index: int) -> String:
-	if index == sans.size() - 1:
-		return "[color=#%s][b]%s[/b][/color]" % [C_GOLD_SOFT.to_html(false), sans[index]]
-	return sans[index]
+	var current := (view_ply - 1) if view_ply >= 0 else sans.size() - 1
+	var plain := sans[index]
+	if index == current:
+		plain = "[bgcolor=#%s][color=#%s][b] %s [/b][/color][/bgcolor]" % [Color(C_GOLD, 0.28).to_html(true), C_GOLD_SOFT.to_html(false), sans[index]]
+	return "[url=%d]%s[/url]" % [index + 1, plain]
 
 
 func _scroll_moves() -> void:
@@ -1358,7 +1690,7 @@ func _versus() -> bool:
 
 
 func _human_is_white() -> bool:
-	return color_opt.selected == 0
+	return human_white
 
 
 func _bottom_is_white() -> bool:
@@ -1368,6 +1700,262 @@ func _bottom_is_white() -> bool:
 func _on_flip() -> void:
 	board_flipped = not board_flipped
 	_refresh()
+
+
+# ---- History: step through the moves and analyse any position -------------
+
+func _current_ply() -> int:
+	return view_ply if view_ply >= 0 else played.size()
+
+
+func _ply_name(ply: int) -> String:
+	if ply <= 0 or ply > sans.size():
+		return "start position"
+	var index := ply - 1
+	var lead := 1 if start_black else 0
+	var number := start_number + (index + lead) / 2
+	if (index + lead) % 2 == 0:
+		return "%d. %s" % [number, sans[index]]
+	return "%d... %s" % [number, sans[index]]
+
+
+func _review_caption() -> String:
+	if view_ply < 0:
+		return ""
+	if view_ply == 0:
+		return "Start position"
+	return "Position after %s" % _ply_name(view_ply)
+
+
+func _update_nav_buttons() -> void:
+	if nav_buttons.size() < 4:
+		return
+	var busy := animating or engine_busy
+	var at_start := _current_ply() <= 0
+	var live := view_ply < 0
+	(nav_buttons[0] as Button).disabled = busy or at_start
+	(nav_buttons[1] as Button).disabled = busy or at_start
+	(nav_buttons[2] as Button).disabled = busy or live
+	(nav_buttons[3] as Button).disabled = busy or live
+
+
+func _on_move_clicked(meta: Variant) -> void:
+	_goto_ply(int(str(meta)))
+
+
+func _nav_first() -> void:
+	_goto_ply(0)
+
+
+func _nav_prev() -> void:
+	_goto_ply(_current_ply() - 1)
+
+
+func _nav_next() -> void:
+	if view_ply >= 0:
+		_goto_ply(view_ply + 1)
+
+
+func _nav_last() -> void:
+	_leave_review()
+
+
+# Shows the position after `ply` half-moves (0 is the start). The last ply
+# means "back to the live game". Stockfish then analyses the shown position.
+func _goto_ply(ply: int) -> void:
+	if animating or engine_busy:
+		return
+	var target := clampi(ply, 0, played.size())
+	if target >= played.size():
+		_leave_review()
+		return
+	if target == view_ply:
+		return
+	if view_ply < 0:
+		saved_eval_share = board_view.eval_share
+		saved_eval_text = board_view.eval_text
+		live_before_review = 1 if show_lines_check.button_pressed else 0
+		show_lines_check.set_pressed_no_signal(true)
+	_cancel_promo()
+	selected = -1
+	view_ply = target
+	view_game = ChessGame.new()
+	view_game.load_fen(start_fen)
+	for i in target:
+		view_game.make_move(played[i])
+	_clear_branches()
+	_refresh()
+	if show_lines_check.button_pressed:
+		_schedule_analysis()
+	else:
+		_pause_review_analysis()
+
+
+func _leave_review() -> void:
+	if view_ply < 0:
+		return
+	_end_review()
+	_clear_branches()
+	_set_eval(saved_eval_share, saved_eval_text, false)
+	_refresh()
+	if _engine_should_move():
+		_start_engine()
+
+
+# Forgets the reviewed position and asks any running analysis to stop. It does
+# not wait for it, so this is safe to call from anywhere.
+func _end_review() -> void:
+	if live_before_review >= 0:
+		show_lines_check.set_pressed_no_signal(live_before_review == 1)
+		live_before_review = -1
+	view_ply = -1
+	view_game = null
+	live_fen = ""
+	analysis_pending = false
+	pending_info.clear()
+	if analysis_running:
+		analysis_running = false
+		if engine != null:
+			engine.stop()
+
+
+# Live was switched off while reviewing: stop the engine and clear its lines.
+func _pause_review_analysis() -> void:
+	live_fen = ""
+	analysis_pending = false
+	pending_info.clear()
+	_clear_branches()
+	if analysis_running:
+		analysis_running = false
+		if engine != null:
+			engine.stop()
+
+
+func _play_from_here() -> void:
+	if view_ply < 0 or animating or engine_busy:
+		return
+	var ply := view_ply
+	var removed := played.size() - ply
+	_end_review()
+	_cancel_search()
+	played.resize(ply)
+	sans.resize(ply)
+	_undo_clock(removed)
+	_rebuild()
+	_clear_branches()
+	_set_eval(0.5, "0.0", false)
+	_after_load("Continuing from here")
+
+
+func _scroll_to_ply() -> void:
+	if moves_label == null or view_ply < 0 or sans.is_empty():
+		return
+	var lead := 1 if start_black else 0
+	var rows := (sans.size() + lead + 1) / 2
+	var row := (maxi(view_ply, 1) - 1 + lead) / 2
+	var bar := moves_label.get_v_scroll_bar()
+	var row_height := float(moves_label.get_content_height()) / float(maxi(rows, 1))
+	var top := float(row) * row_height
+	if top < bar.value:
+		bar.value = top
+	elif top + row_height > bar.value + bar.page:
+		bar.value = top + row_height - bar.page
+
+
+func _schedule_analysis() -> void:
+	pending_info.clear()
+	live_fen = ""
+	analysis_running = false
+	if engine != null:
+		engine.stop()
+	analysis_pending = true
+	analysis_delay = ANALYSIS_DELAY
+
+
+func _start_analysis() -> void:
+	if view_ply < 0 or view_game == null or no_engine or screenshot:
+		return
+	if _resolved_engine_path().is_empty():
+		lines_hint.text = "Stockfish is needed to analyse positions. Download it or choose the file in Settings."
+		return
+	if not _ensure_engine():
+		return
+	pending_info.clear()
+	var options := _engine_options()
+	options["limit_elo"] = false
+	options["skill"] = 20
+	options["multipv"] = 5
+	engine.search(view_game.to_fen(), {"infinite": true}, StockfishUci.engine_settings(options))
+	analysis_running = true
+
+
+# Live analysis: while the live game is on screen and it is your turn (or you
+# play a friend), Stockfish analyses the current position until it changes.
+# This also restarts the analysis when you return from reviewing a move.
+func _live_wanted() -> bool:
+	if not show_lines_check.button_pressed or view_ply >= 0 or state != "":
+		return false
+	if engine_busy or animating or no_engine or screenshot or engine_error != "":
+		return false
+	if analysis_pending or analysis_running:
+		return false
+	if _versus() and not _human_to_move():
+		return false
+	return not _resolved_engine_path().is_empty()
+
+
+func _sync_live_analysis() -> void:
+	if not _live_wanted():
+		_stop_live()
+		return
+	var fen := game.to_fen()
+	if fen == live_fen:
+		return
+	if not _ensure_engine():
+		return
+	_clear_branches()
+	pending_info.clear()
+	var options := _engine_options()
+	options["limit_elo"] = false
+	options["skill"] = 20
+	options["multipv"] = 5
+	live_fen = fen
+	engine.search(fen, {"infinite": true}, StockfishUci.engine_settings(options))
+
+
+func _stop_live() -> void:
+	if live_fen == "":
+		return
+	live_fen = ""
+	pending_info.clear()
+	_clear_branches()
+	if engine != null:
+		engine.stop()
+
+
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or (library_view != null and library_view.visible):
+		return
+	var key := event as InputEventKey
+	if not key.pressed or key.ctrl_pressed or key.alt_pressed or key.meta_pressed or key.shift_pressed:
+		return
+	if key.keycode != KEY_LEFT and key.keycode != KEY_RIGHT and key.keycode != KEY_HOME and key.keycode != KEY_END:
+		return
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus != null and (not (focus is Button) or focus is OptionButton):
+		return
+	if settings_open:
+		return
+	match key.keycode:
+		KEY_LEFT:
+			_nav_prev()
+		KEY_RIGHT:
+			_nav_next()
+		KEY_HOME:
+			_nav_first()
+		KEY_END:
+			_nav_last()
+	get_viewport().set_input_as_handled()
 
 
 func _update_strips() -> void:
@@ -1392,7 +1980,7 @@ func _fill_strip(strip: Dictionary, is_white: bool) -> void:
 		else:
 			name_text = "You"
 			sub_text = "White" if is_white else "Black"
-	var active := state == "" and game.white_to_move == is_white
+	var active := (view_ply >= 0 or state == "") and _pos().white_to_move == is_white
 	var style := strip["style"] as StyleBoxFlat
 	style.bg_color = C_RAISED if active else C_SURFACE
 	style.border_color = C_GOLD if active else Color(0, 0, 0, 0)
@@ -1446,7 +2034,7 @@ func _update_clocks() -> void:
 func _missing(color_sign: int) -> Dictionary:
 	var counts := {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
 	for sq in 64:
-		var piece := int(game.board[sq])
+		var piece := int(_pos().board[sq])
 		if piece == 0 or absi(piece) == ChessGame.KING:
 			continue
 		if (piece > 0) == (color_sign > 0):
@@ -1460,7 +2048,7 @@ func _missing(color_sign: int) -> Dictionary:
 func _material_lead() -> int:
 	var total := 0
 	for sq in 64:
-		var piece := int(game.board[sq])
+		var piece := int(_pos().board[sq])
 		if piece == 0 or absi(piece) == ChessGame.KING:
 			continue
 		var value := int(PIECE_VALUE[absi(piece)])
@@ -1484,13 +2072,21 @@ func _set_eval(share: float, label: String, animate: bool = true) -> void:
 func _score_sign() -> int:
 	# Entries from Stockfish are for the side to move. Flip them so a plus
 	# always means good for you (or for White in pass and play).
-	var to_move := 1 if game.white_to_move else -1
+	var to_move := 1 if _pos().white_to_move else -1
 	var viewer := 1 if (not _versus() or _human_is_white()) else -1
 	return to_move * viewer
 
 
+# The position on the board: the reviewed one when stepping through history,
+# otherwise the live game.
+func _pos() -> ChessGame:
+	if view_ply >= 0 and view_game != null:
+		return view_game
+	return game
+
+
 func _apply_eval(entry: Dictionary) -> void:
-	var white_sign := 1 if game.white_to_move else -1
+	var white_sign := 1 if _pos().white_to_move else -1
 	var viewer := 1 if (not _versus() or _human_is_white()) else -1
 	if bool(entry["has_mate"]):
 		var mate := int(entry["mate"]) * white_sign
@@ -1510,7 +2106,7 @@ func _human_to_move() -> bool:
 
 
 func _engine_should_move() -> bool:
-	return _versus() and state == "" and not _human_to_move() and not animating and not engine_busy and not screenshot and not no_engine
+	return _versus() and state == "" and view_ply < 0 and not _human_to_move() and not animating and not engine_busy and not screenshot and not no_engine
 
 
 func _engine_candidates() -> PackedStringArray:
@@ -1533,20 +2129,26 @@ func _resolved_engine_path() -> String:
 	return _bundled_engine()
 
 
-func _engine_caption() -> String:
+func _engine_caption(entry: Dictionary = {}) -> String:
 	var path := _resolved_engine_path()
-	var base := "Custom engine."
 	if path.is_empty():
 		return "No engine file found."
+	var known := engine != null and engine.path == path and engine.engine_name != ""
+	var kind := ""
 	if path == EngineSetup.install_path():
-		base = "Downloaded Stockfish %s." % EngineSetup.VERSION
-	else:
-		for candidate in _engine_candidates():
-			if path == candidate:
-				base = "Bundled Stockfish %s." % EngineSetup.VERSION
-				break
-	if StockfishUci.last_depth > 0:
-		base += " Last search depth %d." % StockfishUci.last_depth
+		kind = "Downloaded "
+	elif path in _engine_candidates():
+		kind = "Bundled "
+	var label := engine.engine_name if known else ("Stockfish %s" % EngineSetup.VERSION if kind != "" else "engine")
+	var base := "%s%s." % [kind if kind != "" else "Custom ", label]
+	var stats := entry
+	if stats.is_empty() and engine != null:
+		stats = engine.last_entry
+	if not stats.is_empty() and int(stats.get("depth", 0)) > 0:
+		base += " Depth %d" % int(stats["depth"])
+		if int(stats.get("nps", 0)) > 0:
+			base += ", %s" % StockfishUci.format_nodes_per_second(int(stats["nps"]))
+		base += "."
 	return base
 
 
@@ -1611,6 +2213,595 @@ func _browse() -> void:
 	dialog.popup_centered(Vector2i(960, 640))
 
 
+func _build_game_io() -> void:
+	last_dir = OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
+	save_dialog = FileDialog.new()
+	save_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	save_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	save_dialog.filters = PackedStringArray(["*.pgn ; Portable Game Notation"])
+	save_dialog.title = "Save game"
+	save_dialog.file_selected.connect(_on_save_path)
+	add_child(save_dialog)
+
+	open_dialog = FileDialog.new()
+	open_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	open_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	open_dialog.filters = PackedStringArray(["*.pgn, *.fen, *.txt ; Chess games and positions", "* ; All files"])
+	open_dialog.title = "Open game"
+	open_dialog.file_selected.connect(_import_file)
+	add_child(open_dialog)
+
+	notice_dialog = AcceptDialog.new()
+	notice_dialog.title = "NeoChess"
+	notice_dialog.dialog_autowrap = true
+	notice_dialog.min_size = Vector2i(460, 0)
+	add_child(notice_dialog)
+
+	toast = PanelContainer.new()
+	var style := _flat(C_RAISED, 12)
+	_border(style, C_GOLD)
+	style.content_margin_left = 18
+	style.content_margin_right = 18
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	toast.add_theme_stylebox_override("panel", style)
+	toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	toast.visible = false
+	toast_label = Label.new()
+	toast_label.add_theme_font_size_override("font_size", 15)
+	_tint(toast_label, "font_color", C_TEXT)
+	toast.add_child(toast_label)
+	add_child(toast)
+	toast.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	toast.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	toast.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	toast.offset_top = -32
+	toast.offset_bottom = -32
+	get_window().files_dropped.connect(_on_files_dropped)
+
+
+func _notify(text: String) -> void:
+	if toast == null:
+		return
+	toast_label.text = text
+	toast.size = Vector2.ZERO
+	toast.modulate.a = 1.0
+	toast.visible = true
+	if toast_tween != null and toast_tween.is_valid():
+		toast_tween.kill()
+	toast_tween = create_tween()
+	toast_tween.tween_interval(2.6)
+	toast_tween.tween_property(toast, "modulate:a", 0.0, 0.4)
+	toast_tween.tween_callback(func() -> void: toast.visible = false)
+
+
+func _show_notice(title: String, text: String) -> void:
+	if notice_dialog == null:
+		return
+	notice_dialog.title = title
+	notice_dialog.dialog_text = text
+	notice_dialog.popup_centered()
+
+
+func _on_menu(id: int) -> void:
+	match id:
+		MENU_COPY_PGN:
+			DisplayServer.clipboard_set(_game_pgn())
+			_notify("Game copied as PGN")
+		MENU_COPY_FEN:
+			DisplayServer.clipboard_set(game.to_fen())
+			_notify("Position copied as FEN")
+		MENU_SAVE:
+			save_dialog.current_dir = last_dir
+			save_dialog.current_file = "neochess-%s.pgn" % game_date.replace(".", "-")
+			save_dialog.popup_centered(Vector2i(960, 640))
+		MENU_PASTE:
+			_import_text(DisplayServer.clipboard_get(), "Pasted")
+		MENU_OPEN:
+			open_dialog.current_dir = last_dir
+			open_dialog.popup_centered(Vector2i(960, 640))
+		MENU_LIBRARY:
+			_open_library()
+
+
+# ---- Game library and opening book -------------------------------------------
+
+var library_error_shown := false
+var book_sources_loaded := false
+
+
+func _library_file() -> String:
+	if library_path != "":
+		return library_path
+	for arg in OS.get_cmdline_user_args():
+		if str(arg).begins_with("--library="):
+			return str(arg).get_slice("=", 1)
+	if settings_locked:
+		return "user://test_library.db"
+	return GameStore.default_path()
+
+
+# The shared database connection, opened when first needed.
+func _store() -> GameStore:
+	if library_store != null and library_store.is_open():
+		return library_store
+	var opened := GameStore.new()
+	if not opened.open(_library_file()):
+		if not library_error_shown:
+			library_error_shown = true
+			_show_notice("The game library is not available", opened.error)
+		return null
+	library_store = opened
+	library_path = opened.path
+	return opened
+
+
+# Packaging check: `NeoChess.exe -- --check-library=result.txt` writes whether
+# the database library works in this build, then quits.
+func _check_library(report: String) -> void:
+	var store := _store()
+	var text := "library failed"
+	if store != null:
+		var id := store.add_game(store.add_source("check", GameStore.KIND_IMPORT), GameStore.record({"White": "A", "Black": "B"}, PackedStringArray(["e4", "e5"]), "1-0"))
+		text = "library ok %d games=%d sqlite=%s" % [id, store.count({}), str(ClassDB.class_exists("SQLite"))]
+	# Release builds once turned "\ufeff" into an empty string, which dropped the
+	# first character of every PGN line. Check the real parsers in this build.
+	var sample := "[Event \"x\"]\n[White \"A\"]\n\n1. e4 e5 2. Nf3\nNc6 1-0\n\n[Event \"y\"]\n\n1. d4 d5 *\n"
+	var parsed := Pgn.parse(sample)
+	text += " | pgn=%s moves=%d" % [str(parsed["ok"]), (parsed["sans"] as Array).size()]
+	var sample_path := OS.get_user_data_dir().path_join("check_sample.pgn")
+	var sample_file := FileAccess.open(sample_path, FileAccess.WRITE)
+	if sample_file != null:
+		sample_file.store_string(sample)
+		sample_file.close()
+		var reader := PgnReader.new(FileAccess.open(sample_path, FileAccess.READ))
+		var first := reader.next_game()
+		var second := reader.next_game()
+		text += " reader=%s/%d/%d" % [str((first.get("tags", {}) as Dictionary).get("White", "?")), (first.get("sans", PackedStringArray()) as PackedStringArray).size(), (second.get("sans", PackedStringArray()) as PackedStringArray).size()]
+		DirAccess.remove_absolute(sample_path)
+	var file := FileAccess.open(report, FileAccess.WRITE)
+	if file != null:
+		file.store_string(text)
+		file.close()
+	get_tree().quit()
+
+
+func _open_library(select_source: int = 0) -> void:
+	if animating:
+		return
+	if _store() == null:
+		return
+	_set_settings_open(false)
+	library_view.show_library(select_source)
+
+
+# Shows a stored game in the review mode, from the first move.
+func _open_library_game(stored: Dictionary, white_bottom: bool) -> void:
+	if animating:
+		await board_view.animation_finished
+	var fen := str(stored["start_fen"]) if str(stored["start_fen"]) != "" else Pgn.START_FEN
+	# Replay the moves on a scratch board first, so a damaged game is reported
+	# without touching the game on the board.
+	var probe: ChessGame = ChessGame.setup(fen)
+	var moves: Array = []
+	var tokens: PackedStringArray = stored["sans"]
+	for index in tokens.size():
+		var found := Pgn.find_move(probe, tokens[index])
+		if not str(found["error"]).is_empty():
+			_show_notice("Could not open the game", "Move %d (%s) of this game is not legal, so it may be damaged in the library. Delete it there and import the file again." % [index + 1, tokens[index]])
+			return
+		var move: Dictionary = found["move"]
+		moves.append(move.duplicate())
+		probe.make_move(move)
+	_reset_game(fen)
+	game_tags = (stored["extra"] as Dictionary).duplicate()
+	for pair in [["Event", "event"], ["Site", "site"], ["Date", "date"], ["White", "white"], ["Black", "black"], ["ECO", "eco"], ["Opening", "opening"]]:
+		var value := str(stored.get(str(pair[1]), ""))
+		if value != "" and value != "?":
+			game_tags[str(pair[0])] = value
+	for pair in [["WhiteElo", "white_elo"], ["BlackElo", "black_elo"]]:
+		if int(stored.get(str(pair[1]), 0)) > 0:
+			game_tags[str(pair[0])] = str(int(stored[str(pair[1])]))
+	for move in moves:
+		sans.append(game.to_san(move))
+		played.append(move)
+		game.make_move(move)
+	recorded_result = str(stored["result"]) if str(stored["result"]) != "*" else ""
+	_after_load("Opened from the library: %d moves" % moves.size(), false)
+	human_white = white_bottom
+	board_flipped = false
+	_refresh()
+	_goto_ply(0)
+
+
+# Saves the current game to "My games" (again, with the new moves, when it
+# has already been saved). Games loaded from files and the library are not
+# saved a second time.
+func _archive_game() -> void:
+	if not archive_enabled or not archivable or sans.size() < 2:
+		return
+	var result := _game_result()
+	var key := "%d|%s" % [sans.size(), result]
+	if key == archived_key:
+		return
+	var store := _store()
+	if store == null:
+		return
+	var info := _game_info()
+	if not info.has("Event"):
+		info["Event"] = "NeoChess game"
+	if not info.has("Site"):
+		info["Site"] = "NeoChess"
+	if start_fen != Pgn.START_FEN:
+		info["FEN"] = start_fen
+	var row := GameStore.record(info, PackedStringArray(sans), result)
+	if archive_id > 0:
+		store.delete_games([archive_id])
+	archive_id = store.add_game(store.mine_source(), row)
+	archived_key = key
+	book_key = ""
+
+
+func _on_sources_changed() -> void:
+	book_sources_loaded = false
+	book_key = ""
+	_update_book()
+
+
+func _on_games_deleted(ids: Array) -> void:
+	if archive_id > 0 and ids.has(archive_id):
+		archive_id = 0
+		archived_key = ""
+
+
+func _on_imported(source_name: String, added: int) -> void:
+	if added > 0 and not book_check.button_pressed:
+		book_check.button_pressed = true
+		_notify("Opening book switched on: %s" % source_name)
+
+
+func _build_book_card() -> Control:
+	book_card = PanelContainer.new()
+	book_card.add_theme_stylebox_override("panel", _card_style())
+	book_card.visible = false
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 6)
+	book_card.add_child(col)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 8)
+	col.add_child(head)
+	book_title = Label.new()
+	book_title.text = "Opening book"
+	book_title.add_theme_font_size_override("font_size", 17)
+	book_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tint(book_title, "font_color", C_GOLD_SOFT)
+	head.add_child(book_title)
+	book_source_opt = OptionButton.new()
+	book_source_opt.custom_minimum_size = Vector2(150, 0)
+	book_source_opt.fit_to_longest_item = false
+	book_source_opt.tooltip_text = "Which games the book counts"
+	book_source_opt.add_item("All games")
+	head.add_child(book_source_opt)
+	book_hint = _muted("")
+	col.add_child(book_hint)
+	for i in BOOK_ROWS:
+		var row := Button.new()
+		row.flat = true
+		row.focus_mode = Control.FOCUS_NONE
+		row.custom_minimum_size = Vector2(0, 30)
+		row.visible = false
+		row.pressed.connect(_on_book_row.bind(i))
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 8)
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(line)
+		line.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 6)
+		var move_label := Label.new()
+		move_label.custom_minimum_size = Vector2(58, 0)
+		move_label.add_theme_font_size_override("font_size", 16)
+		move_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_tint(move_label, "font_color", C_TEXT)
+		line.add_child(move_label)
+		var count_label := Label.new()
+		count_label.custom_minimum_size = Vector2(52, 0)
+		count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		count_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_tint(count_label, "font_color", C_MUTED)
+		line.add_child(count_label)
+		var bar := ResultBar.new()
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		line.add_child(bar)
+		var score_label := Label.new()
+		score_label.custom_minimum_size = Vector2(42, 0)
+		score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		score_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_tint(score_label, "font_color", C_MUTED)
+		line.add_child(score_label)
+		col.add_child(row)
+		book_bars.append({"row": row, "move": move_label, "count": count_label, "bar": bar, "score": score_label})
+	return book_card
+
+
+# The moves of the shown position from the standard start, or null when the
+# book does not apply (a game set up from a FEN).
+func _book_line() -> Variant:
+	if start_fen != Pgn.START_FEN:
+		return null
+	var count := view_ply if view_ply >= 0 else sans.size()
+	var line := PackedStringArray()
+	for i in mini(count, sans.size()):
+		line.append(sans[i])
+	return line
+
+
+func _book_sources() -> Array:
+	var index := book_source_opt.selected
+	if index <= 0 or index >= book_source_ids.size():
+		return []
+	return [int(book_source_ids[index])]
+
+
+func _load_book_sources() -> void:
+	book_sources_loaded = true
+	var store := _store()
+	book_source_ids = [0]
+	book_source_opt.clear()
+	book_source_opt.add_item("All games")
+	var chosen := 0
+	if store != null:
+		for entry in store.sources():
+			var source: Dictionary = entry
+			if int(source["games"]) <= 0:
+				continue
+			book_source_opt.add_item(str(source["name"]))
+			book_source_ids.append(int(source["id"]))
+			if str(source["name"]) == book_source_name:
+				chosen = book_source_ids.size() - 1
+	book_source_opt.select(chosen)
+
+
+func _on_book_source(index: int) -> void:
+	book_source_name = "" if index <= 0 else book_source_opt.get_item_text(index)
+	book_key = ""
+	_save_settings()
+	_update_book()
+
+
+func _update_book() -> void:
+	if book_card == null:
+		return
+	var on := book_check.button_pressed
+	book_card.visible = on
+	if not on:
+		return
+	var line: Variant = _book_line()
+	if line == null:
+		_show_book([], "The book covers games from the standard starting position.")
+		book_key = ""
+		return
+	var moves: PackedStringArray = line
+	if moves.size() >= GameStore.LINE_PLIES:
+		_show_book([], "Past the book: it covers the first %d moves of a game." % (GameStore.LINE_PLIES / 2))
+		book_key = ""
+		return
+	var store := _store()
+	if store == null:
+		_show_book([], "The game library is not available.")
+		return
+	if not book_sources_loaded:
+		_load_book_sources()
+	var sources := _book_sources()
+	var key := "%s#%s" % [" ".join(moves), str(sources)]
+	if key == book_key:
+		return
+	book_key = key
+	book_hint.text = "Looking up…" if book_rows.is_empty() else book_hint.text
+	book_query.db_path = store.path
+	book_query.ask(key, moves, sources)
+
+
+func _on_book_answer(key: String, rows: Array) -> void:
+	if key != book_key:
+		return
+	var total := 0
+	for entry in rows:
+		total += int((entry as Dictionary)["games"])
+	var hint := ""
+	if rows.is_empty():
+		var store := _store()
+		if store != null and store.total_games() == 0:
+			hint = "Your library is empty. Open Game ▸ Game library to import a database."
+		else:
+			hint = "No game in the library goes on from here."
+	else:
+		hint = "%s games continue from here." % _compact_count(total)
+		if _book_can_play():
+			hint += " Click a move to play it."
+	_show_book(rows, hint)
+
+
+func _show_book(rows: Array, hint: String) -> void:
+	book_rows = rows
+	book_hint.text = hint
+	book_hint.visible = hint != ""
+	for i in book_bars.size():
+		var entry: Dictionary = book_bars[i]
+		var row_button := entry["row"] as Button
+		if i >= rows.size():
+			row_button.visible = false
+			continue
+		var data: Dictionary = rows[i]
+		var games := int(data["games"])
+		var white := int(data["white"])
+		var draw := int(data["draw"])
+		var black := int(data["black"])
+		row_button.visible = true
+		(entry["move"] as Label).text = str(data["move"])
+		(entry["count"] as Label).text = _compact_count(games)
+		(entry["bar"] as ResultBar).set_counts(white, draw, black)
+		var score := (float(white) + float(draw) * 0.5) / float(maxi(games, 1))
+		(entry["score"] as Label).text = "%d%%" % roundi(score * 100.0)
+		row_button.tooltip_text = "%s games: White won %d%%, draw %d%%, Black won %d%%" % [_compact_count(games), roundi(100.0 * white / maxf(games, 1)), roundi(100.0 * draw / maxf(games, 1)), roundi(100.0 * black / maxf(games, 1))]
+		row_button.disabled = false
+
+
+func _book_can_play() -> bool:
+	return view_ply < 0 and not animating and not engine_busy and state == "" and _human_to_move() and not promo_box.visible and not side_box.visible
+
+
+func _on_book_row(index: int) -> void:
+	if index >= book_rows.size() or not _book_can_play():
+		return
+	var san := str((book_rows[index] as Dictionary)["move"])
+	for move in legal:
+		if game.to_san(move) == san:
+			_commit(move)
+			return
+
+
+func _compact_count(value: int) -> String:
+	if value >= 1000000:
+		return "%.1fM" % (value / 1000000.0)
+	if value >= 10000:
+		return "%dk" % roundi(value / 1000.0)
+	if value >= 1000:
+		return "%.1fk" % (value / 1000.0)
+	return str(value)
+
+
+# The current game as PGN text (Seven Tag Roster plus FEN for set-up starts).
+func _game_pgn() -> String:
+	return Pgn.export_game(_game_info(), sans, _game_result(), start_fen)
+
+
+# The result of the game so far: 1-0, 0-1, 1/2-1/2 or * while it is going on.
+func _game_result() -> String:
+	var current := game.state_of(game.legal_moves())
+	var result := recorded_result if recorded_result != "" else "*"
+	if current != "":
+		result = Pgn.result_for(current, game.white_to_move)
+	return result
+
+
+# The tags describing the current game.
+func _game_info() -> Dictionary:
+	var white := "Player"
+	var black := "Player"
+	if _versus():
+		var engine_name := "Stockfish %s" % EngineSetup.VERSION
+		if _human_is_white():
+			black = engine_name
+		else:
+			white = engine_name
+	else:
+		white = "Player 1"
+		black = "Player 2"
+	var info := {"Date": game_date, "White": white, "Black": black}
+	if use_clock:
+		info["TimeControl"] = str(clock_minutes * 60)
+	info.merge(game_tags, true)
+	return info
+
+
+func _on_save_path(path: String) -> void:
+	var target := path if path.get_extension() != "" else path + ".pgn"
+	var file := FileAccess.open(target, FileAccess.WRITE)
+	if file == null:
+		_show_notice("Could not save the game", "NeoChess could not write %s." % target)
+		return
+	file.store_string(_game_pgn())
+	file.close()
+	last_dir = target.get_base_dir()
+	_notify("Saved %s" % target.get_file())
+
+
+func _on_files_dropped(files: PackedStringArray) -> void:
+	if files.is_empty():
+		return
+	var big := files.size() > 1 or files[0].get_extension().to_lower() == "zip"
+	if not big:
+		var probe := FileAccess.open(files[0], FileAccess.READ)
+		if probe != null:
+			big = probe.get_length() > Pgn.MAX_BYTES
+			probe.close()
+	if library_view.visible or (big and _store() != null):
+		if not library_view.visible:
+			_open_library()
+		library_view.import_files(files)
+		return
+	_import_file(files[0])
+
+
+func _import_file(path: String) -> void:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_show_notice("Could not open the file", "NeoChess could not read %s." % path)
+		return
+	if file.get_length() > Pgn.MAX_BYTES:
+		file.close()
+		_show_notice("Could not open the file", "%s is too large to be a single game." % path.get_file())
+		return
+	var text := file.get_as_text()
+	file.close()
+	last_dir = path.get_base_dir()
+	_import_text(text, "Opened %s" % path.get_file())
+
+
+func _looks_like_fen(text: String) -> bool:
+	return not text.contains("\n") and not text.begins_with("[") and text.count("/") == 7
+
+
+# Loads a PGN game or a FEN position. Returns true when something was loaded.
+func _import_text(text: String, source: String, review: bool = false) -> bool:
+	if animating:
+		_notify("Wait for the move to finish, then try again.")
+		return false
+	var trimmed := text.strip_edges()
+	if trimmed.is_empty():
+		_notify("Nothing to import. Copy a PGN game or a FEN position first.")
+		return false
+	if _looks_like_fen(trimmed):
+		var problem := ChessGame.fen_error(trimmed)
+		if problem != "":
+			_show_notice("Could not load the position", problem)
+			return false
+		_reset_game(trimmed)
+		start_fen = game.to_fen()
+		_after_load("%s: position loaded" % source)
+		return true
+	var parsed := Pgn.parse(text)
+	if not bool(parsed["ok"]):
+		_show_notice("Could not import the game", str(parsed["error"]))
+		return false
+	_reset_game(str(parsed["start_fen"]))
+	game_tags = (parsed["headers"] as Dictionary).duplicate()
+	for key in ["FEN", "SetUp", "Result"]:
+		game_tags.erase(key)
+	for move in parsed["moves"]:
+		played.append((move as Dictionary).duplicate())
+		game.make_move(move as Dictionary)
+	for san in parsed["sans"]:
+		sans.append(str(san))
+	recorded_result = str(parsed["result"]) if str(parsed["result"]) != "*" else ""
+	var count := sans.size()
+	var summary := "%d move%s" % [count, "" if count == 1 else "s"]
+	if int(parsed["game_count"]) > 1:
+		summary += ", first of %d games" % int(parsed["game_count"])
+	_after_load("%s: %s loaded" % [source, summary], not review)
+	return true
+
+
+func _after_load(message: String, resume: bool = true) -> void:
+	var legal_now := game.legal_moves()
+	if _versus() and game.state_of(legal_now) == "":
+		human_white = game.white_to_move
+	_refresh()
+	_notify(message)
+	if resume and _engine_should_move():
+		_start_engine()
+
+
 func _on_engine_file(path: String) -> void:
 	engine_edit.text = path
 	engine_error = ""
@@ -1638,14 +2829,18 @@ func _load_settings() -> void:
 	limit_check.button_pressed = bool(cfg.get_value("engine", "limit_elo", false))
 	_select_hash(int(cfg.get_value("engine", "hash", 64)))
 	mode_opt.selected = int(cfg.get_value("game", "mode", 0))
-	color_opt.selected = int(cfg.get_value("game", "color", 0))
+	human_white = int(cfg.get_value("game", "color", 0)) == 0
 	board_index = clampi(int(cfg.get_value("look", "board", 0)), 0, Appearance.board_count() - 1)
 	piece_index = clampi(int(cfg.get_value("look", "pieces", 0)), 0, Appearance.piece_count() - 1)
 	show_arrow_check.button_pressed = bool(cfg.get_value("view", "arrow", true))
 	show_lines_check.button_pressed = bool(cfg.get_value("view", "lines", false))
+	book_check.set_pressed_no_signal(bool(cfg.get_value("view", "book", false)))
+	book_source_name = str(cfg.get_value("view", "book_source", ""))
 
 
 func _save_settings() -> void:
+	if settings_locked:
+		return
 	var cfg := ConfigFile.new()
 	cfg.set_value("engine", "path", engine_edit.text.strip_edges())
 	cfg.set_value("engine", "skill", int(skill_slider.value))
@@ -1658,11 +2853,14 @@ func _save_settings() -> void:
 	cfg.set_value("engine", "limit_elo", limit_check.button_pressed)
 	cfg.set_value("engine", "elo", int(elo_slider.value))
 	cfg.set_value("game", "mode", mode_opt.selected)
-	cfg.set_value("game", "color", color_opt.selected)
+	cfg.set_value("game", "color", 0 if human_white else 1)
 	cfg.set_value("look", "board", board_index)
 	cfg.set_value("look", "pieces", piece_index)
 	cfg.set_value("view", "arrow", show_arrow_check.button_pressed)
-	cfg.set_value("view", "lines", show_lines_check.button_pressed)
+	var lines_on := show_lines_check.button_pressed if live_before_review < 0 else live_before_review == 1
+	cfg.set_value("view", "lines", lines_on)
+	cfg.set_value("view", "book", book_check.button_pressed)
+	cfg.set_value("view", "book_source", book_source_name)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -1687,12 +2885,23 @@ func _prepare_shot() -> void:
 	_apply_time_mode()
 	_apply_style()
 	_refresh()
-	var sample := StockfishUci.principal_lines(
+	var sample_text := (
 		"info depth 18 multipv 1 score cp 28 pv e1g1 f7f6 d2d4 e5d4 f3d4 c6c5 d4e2 c8g4\n" +
 		"info depth 18 multipv 2 score cp 21 pv d2d3 f8d6 b1d2 g8e7 d2c4 e8g8\n" +
 		"info depth 17 multipv 3 score cp 8 pv f3e5 d8d4 e5f3 d4e4 d1e2 e4e2\n" +
 		"info depth 17 multipv 4 score cp -4 pv d2d4 e5d4 d1d4 d8d4 f3d4 c6c5\n" +
-		"info depth 16 multipv 5 score cp -19 pv b1c3 f8d6 d2d3 g8f6 c1g5 h7h6\n", 5)
+		"info depth 16 multipv 5 score cp -19 pv b1c3 f8d6 d2d3 g8f6 c1g5 h7h6\n"
+	)
+	if "--review" in args:
+		_goto_ply(6)
+		sample_text = (
+			"info depth 21 multipv 1 score cp 31 pv b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6\n" +
+			"info depth 21 multipv 2 score cp 27 pv b5c6 d7c6 d2d3 f8d6 b1d2 g8e7\n" +
+			"info depth 20 multipv 3 score cp 22 pv b5a4 b7b5 a4b3 g8f6 d2d3 f8e7\n" +
+			"info depth 20 multipv 4 score cp 12 pv d2d3 g8f6 b5a4 f8e7 e1g1 e8g8\n" +
+			"info depth 19 multipv 5 score cp 4 pv b5a4 d7d6 c2c3 g8f6 e1g1 f8e7\n"
+		)
+	var sample := StockfishUci.principal_lines(sample_text, 5)
 	for entry in sample:
 		_apply_branch(entry as Dictionary)
 	_apply_eval(sample[0] as Dictionary)
@@ -1704,6 +2913,16 @@ func _prepare_shot() -> void:
 		setup_status.visible = true
 		setup_status.text = "Downloading   33.8 MB of 80.5 MB"
 		setup_cancel_btn.visible = true
+	if "--newgame" in args:
+		side_box.visible = true
+	if "--book" in args:
+		book_check.set_pressed_no_signal(true)
+		book_key = ""
+		_refresh()
+		await get_tree().create_timer(2.5).timeout
+	if "--library" in args:
+		_open_library()
+		await get_tree().create_timer(0.5).timeout
 	if "--settings" in args:
 		_set_settings_open(true)
 		if "--play" in args:
@@ -1984,60 +3203,13 @@ func _select_hash(mb: int) -> void:
 func _process(delta: float) -> void:
 	if use_clock:
 		_update_clocks()
-	if engine_busy or not stream_queue.is_empty():
-		lines_poll += delta
-		if lines_poll >= 0.05:
-			lines_poll = 0.0
-			_read_engine_stream()
-		if not stream_queue.is_empty():
-			_drain_engine_stream(14)
-
-
-func _read_engine_stream() -> void:
-	var path := StockfishUci.stream_log_path()
-	if not FileAccess.file_exists(path):
-		return
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return
-	var length := int(file.get_length())
-	if stream_offset > length:
-		stream_offset = 0
-		stream_partial = ""
-	if stream_offset < length:
-		file.seek(stream_offset)
-		var bytes := file.get_buffer(length - stream_offset)
-		stream_offset += bytes.size()
-		stream_partial += bytes.get_string_from_utf8()
-	file.close()
-	if not stream_partial.contains("\n"):
-		return
-	var parts := stream_partial.split("\n")
-	stream_partial = parts[parts.size() - 1]
-	for i in parts.size() - 1:
-		var raw := parts[i].strip_edges()
-		if raw.begins_with("info ") and raw.contains(" pv "):
-			stream_queue.append(raw)
-
-
-func _drain_engine_stream(limit: int) -> void:
-	var count := 0
-	var lead := {}
-	var analysis := show_lines_check.button_pressed
-	while count < limit and not stream_queue.is_empty():
-		var raw := stream_queue[0]
-		stream_queue.remove_at(0)
-		count += 1
-		var parsed := StockfishUci.principal_lines(raw, 5)
-		if parsed.is_empty():
-			continue
-		var entry := parsed[0] as Dictionary
-		if int(entry["n"]) == 1:
-			lead = entry
-		if analysis:
-			_apply_branch(entry)
-	if not lead.is_empty():
-		_apply_eval(lead)
+	if analysis_pending:
+		analysis_delay -= delta
+		if analysis_delay <= 0.0:
+			analysis_pending = false
+			_start_analysis()
+	_sync_live_analysis()
+	_flush_info()
 
 
 func _set_time_mode(clock: bool) -> void:

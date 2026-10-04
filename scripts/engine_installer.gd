@@ -15,18 +15,21 @@ var worker: Thread
 func start() -> void:
 	if busy:
 		return
+	if not EngineSetup.is_supported():
+		finished.emit("", "Stockfish has no official download for %s on %s. Install it with your package manager and choose the file in Settings." % [OS.get_name(), Engine.get_architecture_name()])
+		return
 	busy = true
 	DirAccess.make_dir_recursive_absolute(EngineSetup.install_dir())
-	if FileAccess.file_exists(EngineSetup.zip_path()):
-		DirAccess.remove_absolute(EngineSetup.zip_path())
+	if FileAccess.file_exists(EngineSetup.archive_path()):
+		DirAccess.remove_absolute(EngineSetup.archive_path())
 	http = HTTPRequest.new()
-	http.download_file = EngineSetup.zip_path()
+	http.download_file = EngineSetup.archive_path()
 	http.use_threads = true
 	http.max_redirects = 8
 	http.timeout = 0.0
 	add_child(http)
 	http.request_completed.connect(_on_downloaded)
-	var err := http.request(EngineSetup.URL)
+	var err := http.request(EngineSetup.download_url())
 	if err != OK:
 		_end("", "Could not start the download (error %d)." % err)
 		return
@@ -71,7 +74,7 @@ func _on_downloaded(result: int, code: int, _headers: PackedStringArray, _body: 
 
 
 func _install() -> void:
-	var outcome := EngineSetup.extract(EngineSetup.zip_path(), EngineSetup.install_dir())
+	var outcome := EngineSetup.extract(EngineSetup.archive_path(), EngineSetup.install_dir())
 	var error := str(outcome["error"])
 	var path := str(outcome["path"])
 	if bool(outcome["ok"]) and not EngineSetup.runs(path):
@@ -89,8 +92,8 @@ func _installed(path: String, error: String) -> void:
 
 
 func _cleanup() -> void:
-	if FileAccess.file_exists(EngineSetup.zip_path()):
-		DirAccess.remove_absolute(EngineSetup.zip_path())
+	if FileAccess.file_exists(EngineSetup.archive_path()):
+		DirAccess.remove_absolute(EngineSetup.archive_path())
 	if http != null:
 		http.queue_free()
 		http = null

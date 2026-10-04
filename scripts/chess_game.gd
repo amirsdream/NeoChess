@@ -54,6 +54,47 @@ static func setup(fen: String):
 	return game
 
 
+# Returns "" when the FEN describes a position the game can play, otherwise a
+# short message for the user.
+static func fen_error(fen: String) -> String:
+	var text := fen.strip_edges()
+	if text.is_empty():
+		return "The position is empty."
+	var parts := text.split(" ", false)
+	var ranks := parts[0].split("/")
+	if ranks.size() != 8:
+		return "A position needs 8 ranks separated by /."
+	var kings := {1: 0, -1: 0}
+	for r in 8:
+		var total := 0
+		for ch in ranks[r]:
+			if ch >= "1" and ch <= "8":
+				total += int(ch)
+			elif FEN_OF.has(ch):
+				total += 1
+				var piece: int = FEN_OF[ch]
+				if absi(piece) == KING:
+					kings[1 if piece > 0 else -1] += 1
+				if absi(piece) == PAWN and (r == 0 or r == 7):
+					return "Pawns cannot stand on the first or last rank."
+			else:
+				return "Unknown character '%s' in the position." % ch
+		if total != 8:
+			return "Rank %d does not have 8 squares." % (8 - r)
+	if kings[1] != 1 or kings[-1] != 1:
+		return "Each side needs exactly one king."
+	if parts.size() > 1 and parts[1] != "w" and parts[1] != "b":
+		return "The side to move must be w or b."
+	if parts.size() > 3 and parts[3] != "-":
+		var ep: String = parts[3]
+		if ep.length() != 2 or "abcdefgh".find(ep.substr(0, 1)) < 0 or (ep.substr(1, 1) != "3" and ep.substr(1, 1) != "6"):
+			return "The en passant square is not valid."
+	var game = setup(text)
+	if game._king_in_check(not game.white_to_move):
+		return "The side that just moved is in check, which cannot happen."
+	return ""
+
+
 func reset() -> void:
 	board = PackedInt32Array()
 	board.resize(64)
