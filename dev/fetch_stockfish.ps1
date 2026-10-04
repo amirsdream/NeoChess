@@ -25,8 +25,8 @@ function Get-HostTarget {
 
 if ($Target -eq "Auto") { $Target = Get-HostTarget }
 
-$isWindows = $Target -eq "Windows"
-$exeName = if ($isWindows) { "stockfish.exe" } else { "stockfish" }
+$forWindows = $Target -eq "Windows"
+$exeName = if ($forWindows) { "stockfish.exe" } else { "stockfish" }
 $target = Join-Path $bin $exeName
 
 if ((Test-Path $target) -and -not $Force) {
@@ -34,7 +34,7 @@ if ((Test-Path $target) -and -not $Force) {
     exit 0
 }
 
-if ($isWindows) {
+if ($forWindows) {
     $asset = "stockfish-windows-x86-64-universal.zip"
     $label = "Universal Windows x86-64"
 } else {
@@ -60,18 +60,18 @@ if ($asset.EndsWith(".zip")) {
     if ($LASTEXITCODE -ne 0) { throw "Failed to extract $asset." }
 }
 
-if ($isWindows) {
+if ($forWindows) {
     $exe = Get-ChildItem -Path $extract -Recurse -Filter "stockfish*.exe" | Select-Object -First 1
 } else {
     $exe = Get-ChildItem -Path $extract -Recurse -File |
-        Where-Object { $_.Name -like "stockfish*" -and $_.Extension -eq "" } |
+        Where-Object { $_.Name -like "stockfish*" -and $_.Name -notlike "*.*" } |
         Select-Object -First 1
 }
 if (-not $exe) { throw "No Stockfish executable found in the archive." }
 
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 Copy-Item -LiteralPath $exe.FullName -Destination $target -Force
-if (-not $isWindows) {
+if (-not $forWindows) {
     & chmod +x $target
     if ($LASTEXITCODE -ne 0) { throw "Failed to mark $target executable." }
 }

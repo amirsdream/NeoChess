@@ -104,8 +104,10 @@ runs:
         if ($target -eq "windows") {
           $binary = Get-ChildItem -Path $root -Filter "*console.exe" -Recurse | Select-Object -First 1
         } else {
+          # Official Linux builds are named Godot_*_linux.x86_64; PowerShell treats
+          # ".x86_64" as an extension, so match on the name instead.
           $binary = Get-ChildItem -Path $root -Recurse -File |
-            Where-Object { $_.Name -like "Godot*" -and $_.Extension -eq "" } |
+            Where-Object { $_.Name -like "Godot*_linux*" -and $_.Name -notlike "*.zip" } |
             Select-Object -First 1
           if ($binary) {
             & chmod +x $binary.FullName

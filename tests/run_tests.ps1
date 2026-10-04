@@ -29,7 +29,7 @@ if (-not $Godot) {
     $local = Get-ChildItem -Path $tools -Filter "Godot*console.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $local) {
         $local = Get-ChildItem -Path $tools -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like "Godot*" -and $_.Extension -eq "" } |
+            Where-Object { $_.Name -like "Godot*_linux*" -and $_.Name -notlike "*.zip" } |
             Select-Object -First 1
     }
     if ($local) { $Godot = $local.FullName }

@@ -43,17 +43,21 @@ function Get-HostTarget {
 }
 
 if ($Target -eq "Auto") { $Target = Get-HostTarget }
-$isWindows = $Target -eq "Windows"
+$forWindows = $Target -eq "Windows"
 
 if (-not $Godot) {
     $onPath = Get-Command godot -ErrorAction SilentlyContinue
     if ($onPath) { $Godot = $onPath.Source }
 }
 if (-not $Godot) {
-    $pattern = if ($isWindows) { "Godot*console.exe" } else { "Godot*" }
-    $local = Get-ChildItem -Path (Join-Path $root ".tools/godot") -Filter $pattern -ErrorAction SilentlyContinue |
-        Where-Object { -not $_.PSIsContainer -and $_.Name -notlike "*.zip" } |
-        Select-Object -First 1
+    $tools = Join-Path $root ".tools/godot"
+    if ($forWindows) {
+        $local = Get-ChildItem -Path $tools -Filter "Godot*console.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    } else {
+        $local = Get-ChildItem -Path $tools -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "Godot*_linux*" -and $_.Name -notlike "*.zip" } |
+            Select-Object -First 1
+    }
     if ($local) { $Godot = $local.FullName }
 }
 if (-not $Godot -or -not (Test-Path $Godot)) {
@@ -66,7 +70,7 @@ if (-not $NoEngine) {
 
 if ($Version) {
     if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3." }
-    if ($isWindows) {
+    if ($forWindows) {
         $presets = Join-Path $root "export_presets.cfg"
         $text = [System.IO.File]::ReadAllText($presets)
         $text = $text -replace 'application/file_version="[^"]*"', "application/file_version=`"$Version.0`""
@@ -79,7 +83,7 @@ if (Test-Path $out) { Remove-Item -LiteralPath $out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 & $Godot --headless --path $root --import | Out-Null
 
-if ($isWindows) {
+if ($forWindows) {
     $preset = "Windows Desktop"
     $binary = Join-Path $out "NeoChess.exe"
     $engineName = "stockfish.exe"
@@ -92,7 +96,7 @@ if ($isWindows) {
 & $Godot --headless --path $root --export-release $preset $binary
 if ($LASTEXITCODE -ne 0) { throw "Godot export failed." }
 if (-not (Test-Path $binary)) { throw "Export did not create $binary." }
-if (-not $isWindows) {
+if (-not $forWindows) {
     & chmod +x $binary
     if ($LASTEXITCODE -ne 0) { throw "Failed to mark $binary executable." }
 }
@@ -101,17 +105,17 @@ if (-not $NoEngine) {
     foreach ($name in $engineName, "Copying.txt", "AUTHORS", "STOCKFISH.txt") {
         Copy-Item -LiteralPath (Join-Path $root "bin/$name") -Destination $out -Force
     }
-    if (-not $isWindows) {
+    if (-not $forWindows) {
         & chmod +x (Join-Path $out $engineName)
         if ($LASTEXITCODE -ne 0) { throw "Failed to mark bundled Stockfish executable." }
     }
 }
 
 if ($Zip) {
-    $slug = if ($isWindows) { "windows" } else { "linux" }
+    $slug = if ($forWindows) { "windows" } else { "linux" }
     $archive = Join-Path $root "dist/NeoChess-$slug.zip"
     if (Test-Path $archive) { Remove-Item -LiteralPath $archive -Force }
-    if ($isWindows) {
+    if ($forWindows) {
         Compress-Archive -Path $out -DestinationPath $archive
     } else {
         Push-Location (Join-Path $root "dist")
