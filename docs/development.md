@@ -49,6 +49,7 @@ Linux and macOS use `sh tests/run_tests.sh [filter]` (set `GODOT` to the binary)
 | `test_pgn.gd` | PGN export and import (comments, variations, castling, promotion, errors), FEN validation |
 | `test_uci.gd` | `go` commands, option clamping, parsing `info` and `option` lines |
 | `test_engine_setup.gd` | Per-platform downloads and lookup, zip and tar.gz extraction, executable checks (no network) |
+| `test_leela.gd` | Leela (lc0) download helpers, extraction, network checks, the engine choice in the app; runs a real lc0 search when `NEOCHESS_LC0` (and `NEOCHESS_LC0_NET`) point to one |
 | `test_appearance.gd` | Every theme is complete and every palette meets contrast targets |
 | `test_smoke.gd` | Loads the real scene and plays, undoes and restarts a game, imports and exports |
 | `test_store.gd` | The SQLite library: reading PGN fast, saving, searching, the explorer, threads, damaged files and library upgrades |
@@ -76,6 +77,8 @@ scripts/uci_engine.gd     a running UCI engine: process, searches, analysis, shu
 scripts/stockfish_uci.gd  UCI commands and parsing of engine output (pure functions)
 scripts/engine_setup.gd   engine lookup per platform, zip and tar.gz extraction, checks
 scripts/engine_installer.gd  the download itself
+scripts/leela_setup.gd    Leela (lc0) lookup, zip extraction, network checks, UCI settings
+scripts/leela_installer.gd  the two-step Leela download (engine, then network)
 scripts/appearance.gd     board and piece themes, app palette from a board
 scripts/piece_art.gd      recolours the piece outlines per piece set
 addons/godot-sqlite/      SQLite for Godot (native libraries, MIT)
@@ -182,7 +185,9 @@ a few seconds, so it needs a desktop session. Useful switches, after `--`:
 | `--library` | The library window |
 | `--settings` (`--play`) | Settings, Look page (or Play page) |
 | `--newgame` | The choose-a-side card |
-| `--setup` | The Stockfish download card |
+| `--setup` | The engine download card (Stockfish, or Leela with `--leela`) |
+| `--leela` | Show Leela as the chosen engine |
+| `--engine` | With `--settings`, open the Engine page |
 
 ## Code signing
 

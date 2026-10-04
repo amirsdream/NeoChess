@@ -184,6 +184,7 @@ static func engine_settings(options: Dictionary) -> Dictionary:
 		"Threads": clampi(int(options.get("threads", 1)), 1, 16),
 		"Hash": clampi(int(options.get("hash", 64)), 1, 1024),
 		"Move Overhead": clampi(int(options.get("overhead", 30)), 0, 5000),
+		"MoveOverheadMs": clampi(int(options.get("overhead", 30)), 0, 5000),
 		"MultiPV": clampi(int(options.get("multipv", 1)), 1, 5),
 	}
 	if bool(options.get("limit_elo", false)):

@@ -49,7 +49,9 @@ $shots = @(
     @("settings-look", @("--settings", "--library=$demo")),
     @("settings-play", @("--settings", "--play", "--library=$demo")),
     @("new-game",      @("--newgame", "--library=$demo")),
-    @("download",      @("--setup", "--no-lines", "--library=$demo"))
+    @("download",      @("--setup", "--no-lines", "--library=$demo")),
+    @("settings-engine", @("--settings", "--engine", "--leela", "--library=$demo")),
+    @("download-leela", @("--leela", "--setup", "--no-lines", "--library=$demo"))
 )
 
 foreach ($shot in $shots) {

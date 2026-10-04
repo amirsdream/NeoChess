@@ -13,6 +13,9 @@ in a searchable library with an opening book.
   positions.
 - **Stockfish 19 included.** Play at levels 0 to 20 or cap it at an Elo rating
   from 1320 to 3190, with a fixed time per move or a real chess clock.
+- **Run the engine on your graphics card.** Switch to **Leela Chess Zero** in
+  Settings, Engine and download it once (about 175 MB); it thinks with a neural
+  network on any DirectX 12 GPU while Stockfish stays the processor engine.
 - **Live engine analysis.** The top five lines stream in with score, depth and
   full variation. A plus always means good for *you*, whichever colour you play.
 - **Review any position.** Click a move, or use the arrow keys, and Stockfish
@@ -59,7 +62,7 @@ notice because releases are not code-signed yet. See
 | --- | --- |
 | [Using NeoChess](docs/using-neochess.md) | Controls, playing, reviewing a game, settings |
 | [Game library and opening book](docs/game-library.md) | Saving games, search, importing and downloading databases, PGN and FEN, the book |
-| [The Stockfish engine](docs/engine.md) | Where NeoChess finds Stockfish, the in-app download, the `UciEngine` API, Linux and macOS |
+| [The engines](docs/engine.md) | Stockfish and Leela Chess Zero (GPU): where NeoChess finds them, the in-app download, the `UciEngine` API, Linux and macOS |
 | [Development](docs/development.md) | Building from source, tests, project layout, releases, code signing |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and verifying a download |
 

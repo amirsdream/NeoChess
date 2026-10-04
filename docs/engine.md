@@ -1,11 +1,14 @@
-# The Stockfish engine
+# The engines
 
 NeoChess plays and analyses with [Stockfish](https://stockfishchess.org), the
-strongest open-source chess engine. It runs Stockfish as a separate program and
-talks to it over the standard UCI protocol.
+strongest open-source chess engine, which runs on the processor. It can also use
+[Leela Chess Zero](https://lczero.org), a neural-network engine that runs on the
+graphics card. Either one runs as a separate program and talks to NeoChess over
+the standard UCI protocol. Pick one in **Settings, Engine, Engine**.
 
 - [Finding the engine](#finding-the-engine)
 - [Download card](#download-card)
+- [Leela Chess Zero on the graphics card](#leela-chess-zero-on-the-graphics-card)
 - [Licensing](#licensing)
 - [The UciEngine API](#the-uciengine-api)
 - [Linux and macOS](#linux-and-macos)
@@ -44,7 +47,52 @@ The same download button lives under **Settings, Engine**. Nothing is sent to
 anyone except the request to GitHub, and nothing is installed outside the
 NeoChess user folder.
 
+## Leela Chess Zero on the graphics card
+
+Stockfish searches millions of positions a second on the processor. Leela
+([lc0](https://github.com/LeelaChessZero/lc0)) judges far fewer positions with a
+neural network, and that network runs on the graphics card. Choose **Leela Chess
+Zero (graphics card)** under **Settings, Engine, Engine** and the sidebar shows a
+download card:
+
+![Leela download card](images/download-leela.png)
+
+- **Download Leela 0.32.1** fetches two things, once, into your user folder
+  (`%APPDATA%\Godot\app_userdata\NeoChess\engine\leela`):
+  1. the Windows **DirectML** build of lc0 from its
+     [GitHub release](https://github.com/LeelaChessZero/lc0/releases/tag/v0.32.1)
+     (about 25 MB). DirectML works with any DirectX 12 graphics card (NVIDIA, AMD
+     or Intel) and needs no CUDA install;
+  2. one neural network, `t1-512x15x8h-distilled-swa-3395000`, from the Leela
+     Chess Zero server (about 143 MB). It is a strong medium-size network that
+     suits a mid-range or better card.
+  A cancelled download continues with the missing part next time. NeoChess then
+  starts lc0 with `Backend=onnx-dml` and the downloaded network.
+- **Choose file** uses an lc0 you already have, for example a CUDA build or one
+  from a Linux package. NeoChess then leaves the backend and network to that
+  copy's own configuration (put the network file next to it or set it in its
+  `lc0.config`).
+- Leela has **no levels**: it always plays at full strength, so the level, Elo
+  cap and hash settings are unavailable while it is chosen. Use Stockfish to play
+  a weaker opponent. Analysis, the three best-move arrows, review and the
+  library work the same with either engine. Switching engines keeps a separate
+  engine file for each.
+- The first search after starting lc0 takes a few seconds while the network is
+  loaded onto the card. On an RTX 4080 the medium network reaches about
+  10,000 positions a second (`go movetime 1500`), which is the normal speed for
+  Leela; it is not comparable to Stockfish's positions-per-second figure.
+- The DirectML library comes from Windows itself (Windows 10 1903 or newer, and
+  Windows 11 recommended). If Leela stops right after starting on an old Windows
+  10, update Windows or choose a different lc0 build.
+- On Linux and macOS lc0 publishes no official download for these backends, so
+  the button only explains this; install lc0 from your package manager (or build
+  it) and use **Choose file**.
+
 ## Licensing
+
+lc0 is GPLv3 and the network is published by the Leela Chess Zero project; neither
+is stored in this repository or shipped in release zips. See
+[THIRD_PARTY.md](../THIRD_PARTY.md).
 
 Stockfish is licensed under the GPLv3, so the source repository keeps it out and
 fetches it separately (`dev/fetch_stockfish.ps1`). Release zips ship it as a

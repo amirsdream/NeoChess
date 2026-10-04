@@ -17,6 +17,15 @@
 - **No live lines**: switch the **Live** toggle on in the Engine analysis card.
   While you review a game, Live also decides whether Stockfish analyses the
   position you are viewing.
+- **Leela stops right after it starts**: the DirectML build needs the DirectML
+  library that ships with Windows 10 1903 and newer. Update Windows, or choose
+  another lc0 build with **Choose file**. Leela also needs its network file; if
+  the card keeps appearing, press **Download Leela** again to finish the missing
+  part.
+- **The first Leela move takes a while**: the network is loaded onto the graphics
+  card on the first search. Later moves are fast.
+- **I want a weaker opponent**: Leela always plays at full strength. Switch the
+  engine back to Stockfish under **Settings, Engine** to use levels and the Elo cap.
 
 ## Game library problems
 

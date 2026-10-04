@@ -8,6 +8,8 @@ signal finished(path: String, error: String)
 
 var busy := false
 var installing := false
+# What is happening now, for the status line.
+var step_text := "Downloading Stockfish"
 var http: HTTPRequest
 var worker: Thread
 

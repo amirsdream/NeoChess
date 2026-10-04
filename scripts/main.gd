@@ -151,6 +151,16 @@ var selected := -1
 var pending_promo: Array = []
 var engine_error := ""
 var installer: EngineInstaller
+var leela_installer: LeelaInstaller
+# Which engine plays and analyses: "stockfish" (CPU) or "leela" (graphics card).
+var engine_kind := "stockfish"
+var engine_paths := {"stockfish": "", "leela": ""}
+var installing_kind := "stockfish"
+var kind_opt: OptionButton
+var hash_row: Control
+var setup_title: Label
+var setup_body: Label
+var setup_link: LinkButton
 var setup_card: PanelContainer
 var setup_progress: ProgressBar
 var setup_status: Label
@@ -198,6 +208,7 @@ func _ready() -> void:
 		var bundled := _bundled_engine()
 		if not bundled.is_empty():
 			engine_edit.text = bundled
+	_apply_kind_texts()
 	_apply_style()
 	_reset_clocks()
 	_apply_time_mode()
@@ -306,6 +317,8 @@ func _build_ui() -> void:
 	body.add_child(side)
 	installer = EngineInstaller.new()
 	add_child(installer)
+	leela_installer = LeelaInstaller.new()
+	add_child(leela_installer)
 	setup_card = _build_setup_card()
 	side.add_child(setup_card)
 	play_panel = _build_play_panel()
@@ -352,14 +365,14 @@ func _build_setup_card() -> PanelContainer:
 	col.add_theme_constant_override("separation", 10)
 	card.add_child(col)
 
-	var title := Label.new()
-	title.text = "Stockfish is needed to play the computer"
-	title.add_theme_font_size_override("font_size", 17)
-	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_tint(title, "font_color", C_GOLD_SOFT)
-	col.add_child(title)
+	setup_title = Label.new()
+	setup_title.add_theme_font_size_override("font_size", 17)
+	setup_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tint(setup_title, "font_color", C_GOLD_SOFT)
+	col.add_child(setup_title)
 
-	col.add_child(_muted("Stockfish is a free, open-source chess engine. Download the official build once (about 80 MB), or choose a copy you already have. Pass and play works without it."))
+	setup_body = _muted("")
+	col.add_child(setup_body)
 
 	setup_progress = ProgressBar.new()
 	setup_progress.min_value = 0.0
@@ -379,7 +392,6 @@ func _build_setup_card() -> PanelContainer:
 	row.add_theme_constant_override("separation", 8)
 	col.add_child(row)
 	setup_download_btn = Button.new()
-	setup_download_btn.text = "Download Stockfish %s" % EngineSetup.VERSION
 	setup_download_btn.custom_minimum_size = Vector2(0, 42)
 	setup_download_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_make_primary(setup_download_btn, 10)
@@ -395,13 +407,48 @@ func _build_setup_card() -> PanelContainer:
 	setup_cancel_btn.visible = false
 	row.add_child(setup_cancel_btn)
 
-	var link := LinkButton.new()
-	link.text = "About this download (Stockfish, GPLv3)"
-	link.uri = EngineSetup.RELEASE_PAGE
-	link.underline = LinkButton.UNDERLINE_MODE_ON_HOVER
-	link.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	col.add_child(link)
+	setup_link = LinkButton.new()
+	setup_link.underline = LinkButton.UNDERLINE_MODE_ON_HOVER
+	setup_link.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	col.add_child(setup_link)
 	return card
+
+
+# The wording of the download card and buttons for the chosen engine.
+func _apply_kind_texts() -> void:
+	var leela := engine_kind == "leela"
+	if setup_title == null:
+		return
+	if leela:
+		setup_title.text = "Leela Chess Zero is needed to play the computer"
+		setup_body.text = "Leela is a free, open-source engine that thinks with a neural network on your graphics card. It needs the engine (about 25 MB) and a network (about 150 MB), downloaded once. Pass and play works without it."
+		setup_link.text = "About this download (Leela Chess Zero, GPLv3)"
+		setup_link.uri = LeelaSetup.RELEASE_PAGE
+		setup_download_btn.text = "Download Leela %s" % LeelaSetup.VERSION
+		engine_download_btn.text = "Download Leela %s and network" % LeelaSetup.VERSION
+		engine_download_btn.tooltip_text = "Fetches the lc0 build for the graphics card (DirectML, any DirectX 12 GPU) from its GitHub release and one neural network from the Leela Chess Zero project, and installs them for your user."
+		engine_edit.placeholder_text = "Path to lc0"
+	else:
+		setup_title.text = "Stockfish is needed to play the computer"
+		setup_body.text = "Stockfish is a free, open-source chess engine. Download the official build once (about 80 MB), or choose a copy you already have. Pass and play works without it."
+		setup_link.text = "About this download (Stockfish, GPLv3)"
+		setup_link.uri = EngineSetup.RELEASE_PAGE
+		setup_download_btn.text = "Download Stockfish %s" % EngineSetup.VERSION
+		engine_download_btn.text = "Download Stockfish %s" % EngineSetup.VERSION
+		engine_download_btn.tooltip_text = "Fetches the official build from the Stockfish GitHub release and installs it for your user."
+		engine_edit.placeholder_text = "Path to stockfish"
+	dialog.title = "Select Leela (lc0)" if leela else "Select Stockfish"
+	if mode_opt != null:
+		mode_opt.set_item_text(0, "Versus %s" % _engine_title())
+
+
+# "Stockfish" or "Leela", for messages.
+func _engine_title() -> String:
+	return "Leela" if engine_kind == "leela" else "Stockfish"
+
+
+func _active_installer() -> Node:
+	return leela_installer if installing_kind == "leela" else installer
 
 
 func _make_primary(button: Button, radius: int) -> void:
@@ -1014,6 +1061,11 @@ func _build_look_page() -> Control:
 func _build_engine_page() -> Control:
 	var page := _page()
 
+	kind_opt = OptionButton.new()
+	kind_opt.add_item("Stockfish  (processor)")
+	kind_opt.add_item("Leela Chess Zero  (graphics card)")
+	page.add_child(_setting("Engine", kind_opt, "Stockfish runs on the processor and can play at any level. Leela Chess Zero uses a neural network on the graphics card (DirectX 12 on Windows), always plays at full strength, and needs a one-time download."))
+
 	threads_label = _muted("Threads  1")
 	threads_slider = HSlider.new()
 	threads_slider.min_value = 1
@@ -1031,7 +1083,8 @@ func _build_engine_page() -> Control:
 	for mb in [16, 32, 64, 128, 256]:
 		hash_opt.add_item("%d MB" % int(mb))
 	hash_opt.selected = 2
-	page.add_child(_setting("Hash memory", hash_opt))
+	hash_row = _setting("Hash memory", hash_opt, "Memory for Stockfish's search tables.")
+	page.add_child(hash_row)
 
 	overhead_label = _muted("Move overhead  30 ms")
 	overhead_slider = HSlider.new()
@@ -1044,7 +1097,7 @@ func _build_engine_page() -> Control:
 	overhead_box.add_theme_constant_override("separation", 4)
 	overhead_box.add_child(overhead_label)
 	overhead_box.add_child(overhead_slider)
-	page.add_child(_setting("Move overhead", overhead_box, "Time reserved per move for the app. Raise it if Stockfish loses time on a clock."))
+	page.add_child(_setting("Move overhead", overhead_box, "Time reserved per move for the app. Raise it if the engine loses time on a clock."))
 
 	engine_edit = LineEdit.new()
 	engine_edit.placeholder_text = "Path to stockfish"
@@ -1062,8 +1115,6 @@ func _build_engine_page() -> Control:
 	path_box.add_child(path_row)
 	path_box.add_child(engine_label)
 	engine_download_btn = Button.new()
-	engine_download_btn.text = "Download Stockfish %s" % EngineSetup.VERSION
-	engine_download_btn.tooltip_text = "Fetches the official Windows build from the Stockfish GitHub release and installs it for your user."
 	engine_download_btn.custom_minimum_size = Vector2(0, 38)
 	path_box.add_child(engine_download_btn)
 	page.add_child(_setting("Engine file", path_box))
@@ -1104,9 +1155,12 @@ func _populate_chips(kind: String, grid: GridContainer) -> void:
 func _connect_signals() -> void:
 	setup_download_btn.pressed.connect(_start_download)
 	engine_download_btn.pressed.connect(_start_download)
-	setup_cancel_btn.pressed.connect(installer.cancel)
+	setup_cancel_btn.pressed.connect(func() -> void: _active_installer().call("cancel"))
 	installer.progress.connect(_on_download_progress)
 	installer.finished.connect(_on_download_finished)
+	leela_installer.progress.connect(_on_download_progress)
+	leela_installer.finished.connect(_on_download_finished)
+	kind_opt.item_selected.connect(_on_kind_selected)
 	board_view.square_clicked.connect(_on_square)
 	board_area.resized.connect(_layout_board_area)
 	mode_opt.item_selected.connect(_on_mode_changed)
@@ -1412,7 +1466,7 @@ func _start_engine() -> void:
 	if engine_busy or animating or screenshot or state != "":
 		return
 	if _resolved_engine_path().is_empty():
-		engine_error = "Stockfish was not found. Download it, choose the file, or switch to pass and play."
+		engine_error = "%s was not found. Download it, choose the file, or switch to pass and play." % _engine_title()
 		_refresh()
 		return
 	if not _ensure_engine():
@@ -1423,7 +1477,7 @@ func _start_engine() -> void:
 	_clear_branches()
 	pending_info.clear()
 	var options := _engine_options()
-	engine.search(game.to_fen(), StockfishUci.go_from_options(options), StockfishUci.engine_settings(options))
+	engine.search(game.to_fen(), StockfishUci.go_from_options(options), _uci_settings(options))
 	_refresh()
 
 
@@ -1507,9 +1561,9 @@ func _on_engine_best_move(uci: String) -> void:
 	var move := game.match_uci(uci)
 	if move.is_empty():
 		if uci.is_empty() or uci == "(none)":
-			engine_error = "Stockfish did not return a move."
+			engine_error = "%s did not return a move." % _engine_title()
 		else:
-			engine_error = "Stockfish returned %s, which is not legal here." % uci
+			engine_error = "%s returned %s, which is not legal here." % [_engine_title(), uci]
 		_refresh()
 		return
 	_commit(move)
@@ -1552,7 +1606,7 @@ func _refresh() -> void:
 	elif analysis:
 		lines_hint.text = "Five best lines, live; blue arrows show the best three. A plus is good for %s." % ("you" if _versus() else "White")
 	else:
-		lines_hint.text = "Switch on Live for Stockfish's best lines and arrows."
+		lines_hint.text = "Switch on Live for %s's best lines and arrows." % _engine_title()
 	if reviewing:
 		if shown.state_of(shown.legal_moves()) == "checkmate":
 			_set_eval(0.0 if shown.white_to_move else 1.0, "Mate", false)
@@ -1582,7 +1636,7 @@ func _status_text() -> String:
 	if view_ply >= 0:
 		return "◷  Reviewing, %s" % _ply_name(view_ply)
 	if engine_busy:
-		return "●  Stockfish is thinking…"
+		return "●  %s is thinking…" % _engine_title()
 	if engine_error != "":
 		return engine_error
 	if state != "":
@@ -1591,7 +1645,7 @@ func _status_text() -> String:
 	if _versus():
 		if _human_to_move():
 			return "!  Check, your move" if in_check else "●  Your move"
-		return "●  Waiting for Stockfish"
+		return "●  Waiting for %s" % _engine_title()
 	var side := "White" if game.white_to_move else "Black"
 	return "%s to move%s" % ["!  " + side if in_check else "●  " + side, ", check" if in_check else ""]
 
@@ -1964,7 +2018,7 @@ func _start_analysis() -> void:
 	if view_ply < 0 or view_game == null or no_engine or screenshot:
 		return
 	if _resolved_engine_path().is_empty():
-		lines_hint.text = "Stockfish is needed to analyse positions. Download it or choose the file in Settings."
+		lines_hint.text = "%s is needed to analyse positions. Download it or choose the file in Settings." % _engine_title()
 		return
 	if not _ensure_engine():
 		return
@@ -1973,7 +2027,7 @@ func _start_analysis() -> void:
 	options["limit_elo"] = false
 	options["skill"] = 20
 	options["multipv"] = 5
-	engine.search(view_game.to_fen(), {"infinite": true}, StockfishUci.engine_settings(options))
+	engine.search(view_game.to_fen(), {"infinite": true}, _uci_settings(options))
 	analysis_running = true
 
 
@@ -2008,7 +2062,7 @@ func _sync_live_analysis() -> void:
 	options["skill"] = 20
 	options["multipv"] = 5
 	live_fen = fen
-	engine.search(fen, {"infinite": true}, StockfishUci.engine_settings(options))
+	engine.search(fen, {"infinite": true}, _uci_settings(options))
 
 
 func _stop_live() -> void:
@@ -2060,8 +2114,10 @@ func _fill_strip(strip: Dictionary, is_white: bool) -> void:
 	var sub_text := ""
 	if _versus():
 		if engine_side:
-			name_text = "Stockfish"
-			if limit_check.button_pressed:
+			name_text = _engine_title()
+			if engine_kind == "leela":
+				sub_text = "Full strength"
+			elif limit_check.button_pressed:
 				sub_text = "Elo cap %d" % int(elo_slider.value)
 			else:
 				sub_text = "Level %d" % int(skill_slider.value)
@@ -2198,10 +2254,36 @@ func _engine_should_move() -> bool:
 
 
 func _engine_candidates() -> PackedStringArray:
-	return EngineSetup.candidates(
-		OS.get_executable_path().get_base_dir(),
-		ProjectSettings.globalize_path("res://bin"),
-	)
+	var exe_dir := OS.get_executable_path().get_base_dir()
+	var project_bin := ProjectSettings.globalize_path("res://bin")
+	if engine_kind == "leela":
+		return LeelaSetup.candidates(exe_dir, project_bin)
+	return EngineSetup.candidates(exe_dir, project_bin)
+
+
+# Where the engine of the chosen kind is installed by the download button.
+func _installed_engine_path() -> String:
+	return LeelaSetup.install_path() if engine_kind == "leela" else EngineSetup.install_path()
+
+
+func _on_kind_selected(index: int) -> void:
+	var kind := "leela" if index == 1 else "stockfish"
+	if kind == engine_kind:
+		return
+	engine_paths[engine_kind] = engine_edit.text.strip_edges()
+	_cancel_search()
+	engine_kind = kind
+	var saved := str(engine_paths.get(kind, ""))
+	engine_edit.text = saved if FileAccess.file_exists(saved) else _bundled_engine()
+	engine_error = ""
+	setup_error = ""
+	_apply_kind_texts()
+	_save_settings()
+	_refresh()
+	if view_ply >= 0 and show_lines_check.button_pressed:
+		_schedule_analysis()
+	if _engine_should_move():
+		_start_engine()
 
 func _bundled_engine() -> String:
 	for path in _engine_candidates():
@@ -2212,9 +2294,10 @@ func _bundled_engine() -> String:
 
 func _resolved_engine_path() -> String:
 	var typed := engine_edit.text.strip_edges()
-	if typed != "" and FileAccess.file_exists(typed):
-		return typed
-	return _bundled_engine()
+	var path := typed if typed != "" and FileAccess.file_exists(typed) else _bundled_engine()
+	if engine_kind == "leela" and LeelaSetup.is_installed_copy(path) and LeelaSetup.needs_network():
+		return ""
+	return path
 
 
 func _engine_caption(entry: Dictionary = {}) -> String:
@@ -2223,11 +2306,12 @@ func _engine_caption(entry: Dictionary = {}) -> String:
 		return "No engine file found."
 	var known := engine != null and engine.path == path and engine.engine_name != ""
 	var kind := ""
-	if path == EngineSetup.install_path():
+	if path == _installed_engine_path():
 		kind = "Downloaded "
 	elif path in _engine_candidates():
 		kind = "Bundled "
-	var label := engine.engine_name if known else ("Stockfish %s" % EngineSetup.VERSION if kind != "" else "engine")
+	var fallback := "Leela Chess Zero %s" % LeelaSetup.VERSION if engine_kind == "leela" else "Stockfish %s" % EngineSetup.VERSION
+	var label := engine.engine_name if known else (fallback if kind != "" else "engine")
 	var base := "%s%s." % [kind if kind != "" else "Custom ", label]
 	var stats := entry
 	if stats.is_empty() and engine != null:
@@ -2247,12 +2331,14 @@ func _needs_engine() -> bool:
 func _update_setup_card() -> void:
 	if setup_card == null:
 		return
-	var busy := installer.busy
+	var active := _active_installer()
+	var busy := bool(active.get("busy"))
 	setup_card.visible = busy or _needs_engine()
 	lines_box.visible = not setup_card.visible
 	setup_download_btn.disabled = busy
 	engine_download_btn.disabled = busy
-	setup_cancel_btn.visible = busy and not installer.installing
+	kind_opt.disabled = busy
+	setup_cancel_btn.visible = busy and not bool(active.get("installing"))
 	setup_progress.visible = busy
 	setup_status.visible = busy or setup_error != ""
 	if not busy:
@@ -2261,23 +2347,25 @@ func _update_setup_card() -> void:
 
 
 func _start_download() -> void:
-	if installer.busy:
+	if installer.busy or leela_installer.busy:
 		return
+	installing_kind = engine_kind
 	setup_error = ""
 	setup_progress.value = 0.0
 	setup_status.text = "Connecting…"
 	_tint(setup_status, "font_color", C_MUTED)
-	installer.start()
+	_active_installer().call("start")
 	_update_setup_card()
 
 
 func _on_download_progress(received: int, total: int) -> void:
-	if installer.installing:
+	var active := _active_installer()
+	if bool(active.get("installing")):
 		setup_progress.value = 100.0
-		setup_status.text = "Installing and checking the engine…"
+		setup_status.text = "%s…" % str(active.get("step_text"))
 	else:
 		setup_progress.value = EngineSetup.progress_ratio(received, total) * 100.0
-		setup_status.text = "Downloading   " + EngineSetup.progress_text(received, total)
+		setup_status.text = "%s   %s" % [str(active.get("step_text")), EngineSetup.progress_text(received, total)]
 	_update_setup_card()
 
 
@@ -2286,7 +2374,9 @@ func _on_download_finished(path: String, error: String) -> void:
 		setup_error = error
 	else:
 		setup_error = ""
-		engine_edit.text = path
+		engine_paths[installing_kind] = path
+		if installing_kind == engine_kind:
+			engine_edit.text = path
 		engine_error = ""
 		_save_settings()
 	_update_setup_card()
@@ -2795,7 +2885,7 @@ func _game_info() -> Dictionary:
 	var white := "Player"
 	var black := "Player"
 	if _versus():
-		var engine_name := "Stockfish %s" % EngineSetup.VERSION
+		var engine_name := "Leela Chess Zero" if engine_kind == "leela" else "Stockfish %s" % EngineSetup.VERSION
 		if _human_is_white():
 			black = engine_name
 		else:
@@ -2927,7 +3017,11 @@ func _load_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(SETTINGS_PATH) != OK:
 		return
-	var saved_path := str(cfg.get_value("engine", "path", ""))
+	engine_kind = "leela" if str(cfg.get_value("engine", "kind", "stockfish")) == "leela" else "stockfish"
+	engine_paths["stockfish"] = str(cfg.get_value("engine", "path", ""))
+	engine_paths["leela"] = str(cfg.get_value("engine", "leela_path", ""))
+	kind_opt.select(1 if engine_kind == "leela" else 0)
+	var saved_path := str(engine_paths[engine_kind])
 	if saved_path != "":
 		engine_edit.text = saved_path
 	skill_slider.set_value_no_signal(float(cfg.get_value("engine", "skill", skill_slider.value)))
@@ -2954,7 +3048,10 @@ func _save_settings() -> void:
 	if settings_locked:
 		return
 	var cfg := ConfigFile.new()
-	cfg.set_value("engine", "path", engine_edit.text.strip_edges())
+	engine_paths[engine_kind] = engine_edit.text.strip_edges()
+	cfg.set_value("engine", "kind", engine_kind)
+	cfg.set_value("engine", "path", str(engine_paths["stockfish"]))
+	cfg.set_value("engine", "leela_path", str(engine_paths["leela"]))
 	cfg.set_value("engine", "skill", int(skill_slider.value))
 	cfg.set_value("engine", "movetime", fixed_movetime)
 	cfg.set_value("engine", "clock_minutes", clock_minutes)
@@ -3019,6 +3116,13 @@ func _prepare_shot() -> void:
 	for entry in sample:
 		_apply_branch(entry as Dictionary)
 	_apply_eval(sample[0] as Dictionary)
+	if "--leela" in args:
+		engine_kind = "leela"
+		kind_opt.select(1)
+		engine_edit.text = ""
+		_apply_kind_texts()
+		_sync_engine_controls()
+		_update_strips()
 	if "--setup" in args:
 		setup_card.visible = true
 		lines_box.visible = false
@@ -3041,6 +3145,8 @@ func _prepare_shot() -> void:
 		_set_settings_open(true)
 		if "--play" in args:
 			_show_settings_page(0)
+		elif "--engine" in args:
+			_show_settings_page(2)
 		else:
 			_show_settings_page(1)
 			preview_board = 5
@@ -3281,6 +3387,15 @@ func _mark_group(chips: Array, chosen: int) -> void:
 			chip.remove_theme_stylebox_override("hover")
 
 
+# The UCI options sent to the engine: NeoChess's own settings, and for the
+# Leela copy that NeoChess installed, its backend and network.
+func _uci_settings(options: Dictionary) -> Dictionary:
+	var settings := StockfishUci.engine_settings(options)
+	if engine_kind == "leela":
+		settings.merge(LeelaSetup.uci_settings(_resolved_engine_path()), true)
+	return settings
+
+
 func _engine_options() -> Dictionary:
 	return {
 		"skill": int(skill_slider.value),
@@ -3289,7 +3404,7 @@ func _engine_options() -> Dictionary:
 		"wtime": maxi(white_ms, 100),
 		"btime": maxi(black_ms, 100),
 		"inc": 0,
-		"threads": int(threads_slider.value),
+		"threads": maxi(int(threads_slider.value), 2) if engine_kind == "leela" else int(threads_slider.value),
 		"hash": _hash_choices()[hash_opt.selected],
 		"overhead": int(overhead_slider.value),
 		"limit_elo": limit_check.button_pressed,
@@ -3419,11 +3534,16 @@ func _fmt_clock(ms: int) -> String:
 
 
 func _sync_engine_controls() -> void:
-	var limited := limit_check.button_pressed
-	skill_slider.editable = not limited
+	var leela := engine_kind == "leela"
+	var limited := limit_check.button_pressed and not leela
+	skill_slider.editable = not limited and not leela
+	limit_check.disabled = leela
+	hash_row.visible = not leela
 	elo_label.visible = limited
 	elo_slider.visible = limited
-	if limited:
+	if leela:
+		skill_label.text = "Full strength"
+	elif limited:
 		skill_label.text = "Elo cap"
 	else:
 		skill_label.text = "Level %d" % int(skill_slider.value)

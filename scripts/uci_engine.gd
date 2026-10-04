@@ -25,6 +25,9 @@ enum State { OFF, STARTING, IDLE, SEARCHING, STOPPING, FAILED }
 
 const HANDSHAKE_MS := 20000
 const STOP_GRACE_MS := 8000
+# The first search of a process may include loading a neural network onto the
+# graphics card, which can take a while. It gets this much extra time.
+const FIRST_SEARCH_GRACE_MS := 90000
 
 var path := ""
 var engine_name := ""
@@ -46,6 +49,7 @@ var _applied: Dictionary = {}
 var _job: Dictionary = {}
 var _queued: Dictionary = {}
 var _fresh_game := false
+var _searched := false
 var _started_ms := 0
 var _deadline_ms := 0
 
@@ -84,6 +88,7 @@ func start(exe_path: String) -> bool:
 	_job = {}
 	_queued = {}
 	_fresh_game = false
+	_searched = false
 	_stderr_text = ""
 	_eof = false
 	_inbox = PackedStringArray()
@@ -220,6 +225,7 @@ func _on_uciok() -> void:
 func _on_best_move(line: String) -> void:
 	var words := line.split(" ", false)
 	var move := str(words[1]) if words.size() > 1 else ""
+	_searched = true
 	match state:
 		State.SEARCHING:
 			state = State.IDLE
@@ -247,13 +253,16 @@ func _begin(job: Dictionary) -> void:
 	_job = job
 	state = State.SEARCHING
 	var budget := StockfishUci.time_budget_ms(go)
+	if budget > 0 and not _searched:
+		budget += FIRST_SEARCH_GRACE_MS
 	_deadline_ms = Time.get_ticks_msec() + budget if budget > 0 else 0
 
 
 func _stop_search() -> void:
 	_send("stop")
 	state = State.STOPPING
-	_deadline_ms = Time.get_ticks_msec() + STOP_GRACE_MS
+	var grace := STOP_GRACE_MS if _searched else STOP_GRACE_MS + FIRST_SEARCH_GRACE_MS
+	_deadline_ms = Time.get_ticks_msec() + grace
 
 
 func _flush_new_game() -> void:
