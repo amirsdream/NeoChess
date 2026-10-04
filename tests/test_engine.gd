@@ -310,6 +310,11 @@ func _review_in_the_app() -> void:
 	var first := await _wait_for_lines(main)
 	expect_true("review shows a line for the first position", first != "", "(none arrived)")
 	expect("analysis is running while reviewing", main.analysis_running, true)
+	var arrows := 0
+	for arrow in main.board_view.analysis_arrows:
+		if int((arrow as Dictionary)["from"]) >= 0:
+			arrows += 1
+	expect_true("real analysis draws three arrows", arrows == 3, "(%d)" % arrows)
 	var first_move := String((main.branch_cards[0]["moves"] as Label).text)
 	expect_true("lines are for the reviewed position", first_move.begins_with("2. "), "(%s)" % first_move)
 	expect_true("the score is a signed number or mate", String((main.branch_cards[0]["score"] as Label).text).length() > 1)

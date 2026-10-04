@@ -1538,13 +1538,13 @@ func _refresh() -> void:
 	var analysis := show_lines_check.button_pressed
 	branches_box.visible = analysis
 	if reviewing and analysis:
-		lines_hint.text = "Stockfish is analysing this position until you leave it. A plus means good for %s." % ("you" if _versus() else "White")
+		lines_hint.text = "Stockfish is analysing this position until you leave it. Its three best moves are drawn on the board (thick, medium, thin). A plus means good for %s." % ("you" if _versus() else "White")
 	elif reviewing:
 		lines_hint.text = "Analysis is stopped. Switch on Live to analyse this position."
 	elif analysis:
-		lines_hint.text = "Stockfish's five best lines, live. A plus means good for %s." % ("you" if _versus() else "White")
+		lines_hint.text = "Stockfish's five best lines, live, and its three best moves on the board (thick, medium, thin). A plus means good for %s." % ("you" if _versus() else "White")
 	else:
-		lines_hint.text = "Switch on Live to watch Stockfish's five best lines while it thinks."
+		lines_hint.text = "Switch on Live to watch Stockfish's five best lines, and its three best moves as arrows on the board."
 	if reviewing:
 		if shown.state_of(shown.legal_moves()) == "checkmate":
 			_set_eval(0.0 if shown.white_to_move else 1.0, "Mate", false)
