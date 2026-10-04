@@ -21,8 +21,9 @@
 ## Game library problems
 
 - **"The game library is not available"**: the database library
-  (`libgdsqlite.windows.template_release.x86_64.dll`) must sit next to
-  `NeoChess.exe`. Unzip the whole release, not just the exe.
+  (`libgdsqlite.*.template_release.x86_64.dll` on Windows, `.so` on Linux) must
+  sit next to the NeoChess binary. Unzip the whole release, not just the
+  executable.
 - **"Move 1. Event: is not a move"** or games that look like tag lines: your
   library holds games read wrongly by an early build. Open the library with the
   current version, which removes them once, then import the file again.

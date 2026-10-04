@@ -25,7 +25,13 @@ if (-not $Godot) {
     if ($onPath) { $Godot = $onPath.Source }
 }
 if (-not $Godot) {
-    $local = Get-ChildItem -Path (Join-Path $root ".tools/godot") -Filter "Godot*console.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $tools = Join-Path $root ".tools/godot"
+    $local = Get-ChildItem -Path $tools -Filter "Godot*console.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $local) {
+        $local = Get-ChildItem -Path $tools -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "Godot*" -and $_.Extension -eq "" } |
+            Select-Object -First 1
+    }
     if ($local) { $Godot = $local.FullName }
 }
 if (-not $Godot -or -not (Test-Path $Godot)) {

@@ -12,7 +12,7 @@
 ## Building from source
 
 You need [Godot 4.7.2](https://godotengine.org/download) (the standard build, not
-.NET) and, to export, its Windows export templates.
+.NET) and, to export, the export templates for your target platform.
 
 ```powershell
 git clone https://github.com/amirsdream/NeoChess.git
@@ -109,40 +109,44 @@ tests/                    headless test suite
 ## Release build
 
 ```powershell
-./dev/build.ps1 -Zip              # bundles Stockfish, writes dist/NeoChess-windows.zip
-./dev/build.ps1 -NoEngine         # a small build that offers the in-app download
+./dev/build.ps1 -Zip                         # host OS: Windows or Linux, with Stockfish
+./dev/build.ps1 -Target Windows -Zip         # Windows package
+./dev/build.ps1 -Target Linux -Zip           # Linux package
+./dev/build.ps1 -NoEngine                    # a small build that offers the in-app download
 ```
 
 If you ship the engine, keep `Copying.txt`, `AUTHORS` and `STOCKFISH.txt` beside
-it. `build.ps1` does this for you. The build also puts the SQLite library
-(`libgdsqlite.windows.template_release.x86_64.dll`) beside the exe. Close
-`NeoChess.exe` before building, or the export cannot replace it.
+it. `build.ps1` does this for you. The export also places the SQLite library next
+to the binary (`libgdsqlite.*.template_release.x86_64.dll` or `.so`). Close a
+running build before exporting, or the export cannot replace it.
 
-To check a build, run `NeoChess.exe -- --check-library=report.txt`. It writes a
-line saying whether the library works and whether the PGN readers behave in a
-release build, then quits.
+To check a build, run `NeoChess.exe -- --check-library=report.txt` (or
+`./NeoChess.x86_64 -- --check-library=report.txt` on Linux). It writes a line
+saying whether the library works and whether the PGN readers behave in a release
+build, then quits.
 
 ## Continuous integration and releases
 
-GitHub Actions does the same work on a clean Windows machine:
+GitHub Actions does the same work on clean Windows and Linux runners:
 
 - **CI** (`.github/workflows/ci.yml`) runs on every push to `main` and on pull
   requests. It installs Godot (checksum-verified), fetches Stockfish, runs the
-  whole test suite, then builds the package and checks that the bundled engine
-  starts. The build is kept as a 7 day artifact.
+  whole test suite on Windows and Linux, then builds both packages and checks
+  that the bundled engine starts. The builds are kept as 7 day artifacts.
 - **Release** (`.github/workflows/release.yml`) runs when you push a version tag.
-  It repeats the tests, stamps the version into the exe, and publishes a GitHub
-  release with `NeoChess-<version>-windows-x64.zip` and its `.sha256` file.
+  It repeats the tests, stamps the version into the Windows exe, and publishes a
+  GitHub release with `NeoChess-<version>-windows-x64.zip`,
+  `NeoChess-<version>-linux-x64.zip`, and their `.sha256` files.
 
 To ship a version:
 
 ```powershell
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
-You can also start **Release** by hand from the Actions tab to get the zip as an
-artifact without publishing anything.
+You can also start **Release** by hand from the Actions tab to get the zips as
+artifacts without publishing anything.
 
 ## Screenshots
 

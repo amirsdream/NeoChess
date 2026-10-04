@@ -1,8 +1,8 @@
 name: Release
 
-# Push a tag such as v1.0.0 to build, test and publish a GitHub release with a
-# ready-to-run Windows package. Run it by hand to get the zip as a build
-# artifact without publishing anything.
+# Push a tag such as v1.2.0 to build, test and publish a GitHub release with
+# ready-to-run Windows and Linux packages. Run it by hand to get the zips as
+# build artifacts without publishing anything.
 
 on:
   push:
@@ -13,13 +13,12 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and publish
-    runs-on: windows-latest
-    timeout-minutes: 40
+  version:
+    name: Work out the version
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Work out the version
         id: version
         shell: pwsh
@@ -33,11 +32,21 @@ jobs:
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Host "Version $version"
 
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    needs: version
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: ./.github/actions/setup-godot
+        with:
+          target: windows
 
       - name: Fetch Stockfish
         shell: pwsh
-        run: ./dev/fetch_stockfish.ps1
+        run: ./dev/fetch_stockfish.ps1 -Target Windows
 
       - name: Run tests
         shell: pwsh
@@ -45,7 +54,7 @@ jobs:
 
       - name: Build the package
         shell: pwsh
-        run: ./dev/build.ps1 -Version "${{ steps.version.outputs.value }}"
+        run: ./dev/build.ps1 -Target Windows -Version "${{ needs.version.outputs.value }}"
 
       # Code signing is optional and switches on by itself once the repository
       # variable SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN exist.
@@ -71,7 +80,7 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed
           parameters: |
-            Version: "${{ steps.version.outputs.value }}"
+            Version: "${{ needs.version.outputs.value }}"
 
       - name: Use the signed exe
         if: vars.SIGNPATH_ORGANIZATION_ID != '' && github.ref_type == 'tag'
@@ -99,7 +108,7 @@ jobs:
       - name: Name the zip and write checksums
         shell: pwsh
         run: |
-          $zip = "dist/NeoChess-${{ steps.version.outputs.value }}-windows-x64.zip"
+          $zip = "dist/NeoChess-${{ needs.version.outputs.value }}-windows-x64.zip"
           Move-Item -LiteralPath "dist/NeoChess-windows.zip" -Destination $zip -Force
           $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
           "$hash  $(Split-Path $zip -Leaf)" | Out-File -FilePath "$zip.sha256" -Encoding ascii
@@ -107,28 +116,110 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NeoChess-${{ steps.version.outputs.value }}-windows-x64
+          name: NeoChess-${{ needs.version.outputs.value }}-windows-x64
           path: |
             dist/*.zip
             dist/*.sha256
 
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    needs: version
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-godot
+        with:
+          target: linux
+
+      - name: Install zip
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Fetch Stockfish
+        shell: pwsh
+        run: ./dev/fetch_stockfish.ps1 -Target Linux
+
+      - name: Run tests
+        shell: pwsh
+        run: ./tests/run_tests.ps1
+
+      - name: Build the package
+        shell: pwsh
+        run: ./dev/build.ps1 -Target Linux -Zip
+
+      - name: Verify the package
+        shell: pwsh
+        run: |
+          foreach ($name in "NeoChess.x86_64", "stockfish", "Copying.txt", "AUTHORS", "STOCKFISH.txt") {
+            if (-not (Test-Path (Join-Path "dist/NeoChess" $name))) { throw "Missing $name in the package." }
+          }
+          $out = & "dist/NeoChess/stockfish" compiler
+          if (-not ($out -join " ").Contains("Stockfish")) { throw "Bundled Stockfish does not run." }
+
+      - name: Name the zip and write checksums
+        shell: pwsh
+        run: |
+          $zip = "dist/NeoChess-${{ needs.version.outputs.value }}-linux-x64.zip"
+          Move-Item -LiteralPath "dist/NeoChess-linux.zip" -Destination $zip -Force
+          $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $zip -Leaf)" | Out-File -FilePath "$zip.sha256" -Encoding ascii
+          Get-ChildItem dist | Where-Object { -not $_.PSIsContainer } | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeoChess-${{ needs.version.outputs.value }}-linux-x64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+  publish:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: [version, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: NeoChess-${{ needs.version.outputs.value }}-windows-x64
+          path: dist
+
+      - name: Download Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: NeoChess-${{ needs.version.outputs.value }}-linux-x64
+          path: dist
+
       - name: Publish the release
-        if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
+          $version = "${{ needs.version.outputs.value }}"
           $notes = @"
           ## Play
 
-          1. Download **NeoChess-${{ steps.version.outputs.value }}-windows-x64.zip** below.
+          ### Windows
+          1. Download **NeoChess-$version-windows-x64.zip** below.
           2. Unzip it anywhere.
           3. Run **NeoChess.exe**.
 
-          Stockfish 19 is included, so there is nothing else to install. Windows 10 or 11 (64-bit) is required.
+          Windows 10 or 11 (64-bit) is required.
 
-          SHA-256 is in the ``.sha256`` file. Stockfish is GPLv3; its license files are in the zip.
+          ### Linux
+          1. Download **NeoChess-$version-linux-x64.zip** below.
+          2. Unzip it anywhere.
+          3. Run ``./NeoChess.x86_64``.
+
+          A recent 64-bit Linux desktop with OpenGL 3.3 or newer is required. If the binary is not executable after unzipping, run ``chmod +x NeoChess.x86_64 stockfish``.
+
+          Stockfish 19 is included on both platforms, so there is nothing else to install.
+
+          SHA-256 checksums are in the ``.sha256`` files. Stockfish is GPLv3; its license files are in each zip.
           "@
           gh release create $tag `
             (Get-ChildItem dist/*.zip).FullName `

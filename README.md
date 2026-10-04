@@ -1,9 +1,9 @@
 # NeoChess
 
-A polished desktop chess game for Windows, built with Godot 4.7. Play against
-[Stockfish](https://stockfishchess.org), watch its five best lines update live
-while it thinks, review any position of a game, and keep every game you play in
-a searchable library with an opening book.
+A polished desktop chess game for Windows and Linux, built with Godot 4.7. Play
+against [Stockfish](https://stockfishchess.org), watch its five best lines update
+live while it thinks, review any position of a game, and keep every game you play
+in a searchable library with an opening book.
 
 ![NeoChess playing a game, with Stockfish's lines and the opening book](docs/images/game.png)
 
@@ -40,13 +40,18 @@ a searchable library with an opening book.
 
 ## Install
 
-1. Download `NeoChess-<version>-windows-x64.zip` from the
-   [latest release](https://github.com/amirsdream/NeoChess/releases/latest).
-2. Unzip it anywhere and run `NeoChess.exe`.
+Download a zip from the
+[latest release](https://github.com/amirsdream/NeoChess/releases/latest):
+
+| Platform | File | Run |
+| --- | --- | --- |
+| Windows 10/11 (64-bit) | `NeoChess-<version>-windows-x64.zip` | `NeoChess.exe` |
+| Linux (x86_64) | `NeoChess-<version>-linux-x64.zip` | `./NeoChess.x86_64` |
 
 There is no installer and nothing else to set up: Stockfish and the database
-library are in the zip. You need Windows 10 or 11 (64-bit). Windows may show a
-"protected your PC" notice because releases are not code-signed yet. See
+library are in the zip. On Linux, if the binary is not executable after unzipping,
+run `chmod +x NeoChess.x86_64 stockfish`. Windows may show a "protected your PC"
+notice because releases are not code-signed yet. See
 [verifying a download](docs/troubleshooting.md#verifying-a-download).
 
 ## Documentation

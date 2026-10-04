@@ -1,14 +1,30 @@
 name: Set up Godot
-description: Installs Godot and the Windows export templates, verified against the published SHA-512 sums, and exports GODOT for later steps.
+description: Installs Godot and the matching export templates, verified against the published SHA-512 sums, and exports GODOT for later steps.
 
 inputs:
   version:
     description: Godot version without the -stable suffix
     default: "4.7.2"
+  target:
+    description: Export target to install templates for (windows or linux). Defaults to the runner OS.
+    default: ""
 
 runs:
   using: composite
   steps:
+    - name: Resolve target OS
+      id: target
+      shell: pwsh
+      run: |
+        $target = "${{ inputs.target }}".Trim().ToLowerInvariant()
+        if (-not $target) {
+          if ($IsWindows -eq $true -or $env:OS -match "Windows") { $target = "windows" }
+          else { $target = "linux" }
+        }
+        if ($target -notin @("windows", "linux")) { throw "target must be windows or linux, got $target." }
+        "value=$target" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        Write-Host "Godot setup target: $target"
+
     - name: Restore Godot cache
       id: cache
       uses: actions/cache@v4
@@ -16,7 +32,8 @@ runs:
         path: |
           ~/godot-bin
           ~/AppData/Roaming/Godot/export_templates
-        key: godot-${{ inputs.version }}-windows-v1
+          ~/.local/share/godot/export_templates
+        key: godot-${{ inputs.version }}-${{ steps.target.outputs.value }}-v2
 
     - name: Download Godot and templates
       if: steps.cache.outputs.cache-hit != 'true'
@@ -25,6 +42,7 @@ runs:
         $ErrorActionPreference = "Stop"
         $ProgressPreference = "SilentlyContinue"
         $version = "${{ inputs.version }}"
+        $target = "${{ steps.target.outputs.value }}"
         $base = "https://github.com/godotengine/godot-builds/releases/download/$version-stable"
         $work = Join-Path $env:RUNNER_TEMP "godot-download"
         New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -45,19 +63,32 @@ runs:
           return $path
         }
 
-        $editor = Get-Verified "Godot_v$version-stable_win64.exe.zip"
+        if ($target -eq "windows") {
+          $editorName = "Godot_v$version-stable_win64.exe.zip"
+          $templatePattern = '^templates/(version\.txt|icudt_godot\.dat|windows_(release|debug)_x86_64(_console)?\.exe)$'
+          $templateDir = Join-Path $HOME "AppData/Roaming/Godot/export_templates/$version.stable"
+        } else {
+          $editorName = "Godot_v$version-stable_linux.x86_64.zip"
+          $templatePattern = '^templates/(version\.txt|icudt_godot\.dat|linux_(release|debug)\.x86_64)$'
+          $templateDir = Join-Path $HOME ".local/share/godot/export_templates/$version.stable"
+        }
+
+        $editor = Get-Verified $editorName
         $install = Join-Path $HOME "godot-bin"
-        Expand-Archive -LiteralPath $editor -DestinationPath $install -Force
+        if (Test-Path $install) { Remove-Item -LiteralPath $install -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $install | Out-Null
+        if ($editorName.EndsWith(".zip")) {
+          Expand-Archive -LiteralPath $editor -DestinationPath $install -Force
+        }
 
         $templates = Get-Verified "Godot_v$version-stable_export_templates.tpz"
-        $target = Join-Path $HOME "AppData/Roaming/Godot/export_templates/$version.stable"
-        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        New-Item -ItemType Directory -Force -Path $templateDir | Out-Null
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $archive = [System.IO.Compression.ZipFile]::OpenRead($templates)
         try {
           foreach ($entry in $archive.Entries) {
-            if ($entry.FullName -match '^templates/(version\.txt|icudt_godot\.dat|windows_(release|debug)_x86_64(_console)?\.exe)$') {
-              [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $target $entry.Name), $true)
+            if ($entry.FullName -match $templatePattern) {
+              [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $templateDir $entry.Name), $true)
             }
           }
         } finally {
@@ -65,10 +96,21 @@ runs:
         }
         Remove-Item -LiteralPath $work -Recurse -Force
 
-    - name: Point GODOT at the console build
+    - name: Point GODOT at the editor binary
       shell: pwsh
       run: |
-        $console = Get-ChildItem -Path (Join-Path $HOME "godot-bin") -Filter "*console.exe" -Recurse | Select-Object -First 1
-        if (-not $console) { throw "Godot console executable not found." }
-        "GODOT=$($console.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-        & $console.FullName --version
+        $target = "${{ steps.target.outputs.value }}"
+        $root = Join-Path $HOME "godot-bin"
+        if ($target -eq "windows") {
+          $binary = Get-ChildItem -Path $root -Filter "*console.exe" -Recurse | Select-Object -First 1
+        } else {
+          $binary = Get-ChildItem -Path $root -Recurse -File |
+            Where-Object { $_.Name -like "Godot*" -and $_.Extension -eq "" } |
+            Select-Object -First 1
+          if ($binary) {
+            & chmod +x $binary.FullName
+          }
+        }
+        if (-not $binary) { throw "Godot executable not found under $root." }
+        "GODOT=$($binary.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        & $binary.FullName --version

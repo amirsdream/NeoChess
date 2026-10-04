@@ -130,5 +130,6 @@ Details:
   as `Event:`), they are removed once, and a collection left empty by that
   disappears. Import the file again to get the real games.
 - A library made by a *newer* NeoChess is refused rather than changed.
-- The database needs `libgdsqlite.windows.template_release.x86_64.dll` next to
-  `NeoChess.exe`. The release zip has it.
+- The database needs the SQLite GDExtension library next to the NeoChess binary
+  (`libgdsqlite.*.template_release.x86_64.dll` on Windows, `.so` on Linux). The
+  release zips include it.

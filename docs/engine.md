@@ -94,5 +94,7 @@ Stockfish with your package manager or use the in-app download. The SQLite
 library ships for Linux and macOS too (`addons/godot-sqlite/bin`). Run the tests
 with `sh tests/run_tests.sh`.
 
-Packaged Linux and macOS builds are not published yet, and the platform paths
-have been tested through the unit tests and on Windows only.
+Packaged Linux x86_64 builds ship beside the Windows ones on each GitHub release
+(`NeoChess-<version>-linux-x64.zip`). macOS builds are not published yet. The
+Linux package has been exercised in CI; day-to-day play testing is still densest
+on Windows.
