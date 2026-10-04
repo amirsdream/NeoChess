@@ -56,14 +56,14 @@ func _picking() -> void:
 		"stockfish/src/stockfish.cpp",
 		"stockfish/stockfish-windows-x86-64-universal.exe",
 	])
-	expect("picks the exe", EngineSetup.pick_executable(release), "stockfish/stockfish-windows-x86-64-universal.exe")
-	expect("no exe", EngineSetup.pick_executable(PackedStringArray(["a.txt", "b/"])), "")
-	expect("empty archive", EngineSetup.pick_executable(PackedStringArray()), "")
-	expect("ignores other programs", EngineSetup.pick_executable(PackedStringArray(["tools/helper.exe"])), "")
+	expect("picks the exe", EngineSetup.pick_executable(release, "windows"), "stockfish/stockfish-windows-x86-64-universal.exe")
+	expect("no exe", EngineSetup.pick_executable(PackedStringArray(["a.txt", "b/"]), "windows"), "")
+	expect("empty archive", EngineSetup.pick_executable(PackedStringArray(), "windows"), "")
+	expect("ignores other programs", EngineSetup.pick_executable(PackedStringArray(["tools/helper.exe"]), "windows"), "")
 	var nested := PackedStringArray(["deep/er/stockfish-old.exe", "stockfish.exe"])
-	expect("prefers the shallowest", EngineSetup.pick_executable(nested), "stockfish.exe")
-	expect("case is ignored", EngineSetup.pick_executable(PackedStringArray(["Stockfish/Stockfish.EXE"])), "Stockfish/Stockfish.EXE")
-	expect("folders are ignored", EngineSetup.pick_executable(PackedStringArray(["stockfish.exe/"])), "")
+	expect("prefers the shallowest", EngineSetup.pick_executable(nested, "windows"), "stockfish.exe")
+	expect("case is ignored", EngineSetup.pick_executable(PackedStringArray(["Stockfish/Stockfish.EXE"]), "windows"), "Stockfish/Stockfish.EXE")
+	expect("folders are ignored", EngineSetup.pick_executable(PackedStringArray(["stockfish.exe/"]), "windows"), "")
 
 	var unix := PackedStringArray([
 		"stockfish/",
