@@ -3,6 +3,7 @@
 - [Playing a game](#playing-a-game)
 - [Controls](#controls)
 - [Engine analysis and the Live switch](#engine-analysis-and-the-live-switch)
+- [Which opening is this?](#which-opening-is-this)
 - [Reviewing a game](#reviewing-a-game)
 - [Settings](#settings)
 - [Where your data is kept](#where-your-data-is-kept)
@@ -63,6 +64,13 @@ variation. The card also names the engine and shows its speed.
   background.
 - **Book** shows what the [opening book](game-library.md#the-opening-book) knows
   about the position.
+- **Arrows.** The first move of Stockfish's three best lines is drawn on the board in blue: a thick arrow for the best move, a medium one for the second best and a thin one for the third. They follow the lines as they change and go away when the analysis stops. Turn them off with **Settings, Look, Best-move arrows**.
+
+## Which opening is this?
+
+The **Moves** card names the opening of the position on the board, with its ECO code, for example *C70 · Ruy Lopez: Morphy Defense*. Under the name you see the main line, or, if the game has left the known lines, where it did (*Left the known line after 4. Bxc6, 2 moves ago*). Click through the moves of a game and the name follows. It works by position, so the same opening is recognised after a transposition.
+
+The names are the roughly 3,800 lines of the [Lichess chess-openings](https://github.com/lichess-org/chess-openings) data set (CC0). They also go into the game you save: your games get ECO and Opening tags, so the library can search them by opening.
 
 ## Reviewing a game
 
@@ -93,7 +101,7 @@ Press **Settings** (or `S`). There are three pages:
 | Page | What you can change |
 | --- | --- |
 | **Play** | Opponent (Stockfish or pass and play), strength (level 0 to 20, or cap it at an Elo), and the thinking time (fixed per move, or a chess clock) |
-| **Look** | Board theme, piece set and the last-move arrow. Hover over a theme to preview it and click to keep it. |
+| **Look** | Board theme, piece set, the last-move arrow and the best-move arrows. Hover over a theme to preview it and click to keep it. |
 | **Engine** | CPU threads, hash memory, move overhead and the engine file |
 
 ![Settings, Play page](images/settings-play.png)

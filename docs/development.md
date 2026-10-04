@@ -52,6 +52,7 @@ Linux and macOS use `sh tests/run_tests.sh [filter]` (set `GODOT` to the binary)
 | `test_appearance.gd` | Every theme is complete and every palette meets contrast targets |
 | `test_smoke.gd` | Loads the real scene and plays, undoes and restarts a game, imports and exports |
 | `test_store.gd` | The SQLite library: reading PGN fast, saving, searching, the explorer, threads, damaged files and library upgrades |
+| `test_openings.gd` | Opening names (by position, transpositions, leaving the known line), their display, the tags of saved games, and the arrows for the three best moves |
 | `test_library.gd` | The library in the app: saving games, the window, background imports (PGN, zip, cancel), the opening book |
 | `test_engine.gd` | `UciEngine` against a real Stockfish: handshake, options, MultiPV, stop and replace, shutdown, reviewing a game and the Live switch; skipped if no engine is installed |
 
@@ -67,6 +68,7 @@ scripts/game_store.gd     the SQLite library: games, collections, search, openin
 scripts/game_importer.gd  background import of PGN files and zips
 scripts/library_view.gd   the game library window
 scripts/book_query.gd     opening book lookups on a worker thread
+scripts/opening_names.gd  names the opening of a position (ECO code and name)
 scripts/database_downloader.gd  downloads a game database
 scripts/result_bar.gd     the win/draw/loss bar in the opening book
 scripts/board_view.gd     board drawing, animation, eval bar, last-move arrow
@@ -77,6 +79,7 @@ scripts/engine_installer.gd  the download itself
 scripts/appearance.gd     board and piece themes, app palette from a board
 scripts/piece_art.gd      recolours the piece outlines per piece set
 addons/godot-sqlite/      SQLite for Godot (native libraries, MIT)
+data/openings.tsv        the opening names, built by dev/build_openings.gd
 dev/                      fetch, build, screenshot and benchmark scripts
 docs/                     this documentation and its pictures
 tests/                    headless test suite
@@ -147,6 +150,15 @@ git push origin v1.2.0
 
 You can also start **Release** by hand from the Actions tab to get the zips as
 artifacts without publishing anything.
+
+## Opening names
+
+`data/openings.tsv` comes from the [Lichess chess-openings](https://github.com/lichess-org/chess-openings) data set (CC0): about 3,800 named lines with ECO codes. `dev/build_openings.gd` plays each line once and stores the key of the position it ends in (pieces, side to move, castling rights), so the game finds a name without replaying anything. To update it, download `a.tsv` to `e.tsv` from that repository into a folder and run:
+
+```powershell
+godot --headless --path . --script dev/build_openings.gd -- <folder>
+```n
+The file must stay in the export (`include_filter` in `export_presets.cfg`).
 
 ## Screenshots
 

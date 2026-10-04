@@ -13,6 +13,12 @@ const SELECTED := Color(0.85, 0.72, 0.22, 0.62)
 const CHECK := Color(0.78, 0.16, 0.12, 0.58)
 const HOVER := Color(1, 1, 1, 0.10)
 const EVAL_RESERVE := 46.0
+# Arrows for the three best moves: [colour, width compared with the last-move arrow].
+const ANALYSIS_ARROWS := [
+	[Color(0.30, 0.66, 0.98, 0.95), 1.45],
+	[Color(0.30, 0.66, 0.98, 0.78), 0.9],
+	[Color(0.30, 0.66, 0.98, 0.6), 0.5],
+]
 const EVAL_WIDTH := 26.0
 
 var board := PackedInt32Array()
@@ -23,6 +29,10 @@ var captures := {}
 var last_from := -1
 var last_to := -1
 var show_last_arrow := true
+# Stockfish's best moves as arrows, best first: [{from, to}]. The best one is
+# drawn thick, the second medium and the third thin.
+var analysis_arrows: Array = []
+var show_analysis_arrows := true
 var show_eval := true
 var eval_share := 0.5:
 	set(value):
@@ -264,6 +274,20 @@ func _draw() -> void:
 		if anim_piece != 0:
 			fade = clampf((anim_t - 0.25) / 0.6, 0.0, 1.0)
 		_draw_arrow(_cell(last_from, layout).get_center(), _cell(last_to, layout).get_center(), square, fade)
+	if show_analysis_arrows and anim_piece == 0:
+		for rank in range(mini(analysis_arrows.size(), ANALYSIS_ARROWS.size()) - 1, -1, -1):
+			var arrow: Dictionary = analysis_arrows[rank]
+			var style: Array = ANALYSIS_ARROWS[rank]
+			var from_sq := int(arrow["from"])
+			var to_sq := int(arrow["to"])
+			if from_sq >= 0 and to_sq >= 0:
+				_draw_arrow(_cell(from_sq, layout).get_center(), _cell(to_sq, layout).get_center(), square, 1.0, style[0], float(style[1]))
+
+
+# Sets the arrows for the best moves, best first, and redraws.
+func set_analysis_arrows(arrows: Array) -> void:
+	analysis_arrows = arrows
+	queue_redraw()
 
 
 func _layout() -> Dictionary:
@@ -334,7 +358,7 @@ func _font() -> Font:
 	return theme_font if theme_font != null else ThemeDB.fallback_font
 
 
-func _draw_arrow(start: Vector2, finish: Vector2, square: float, fade: float = 1.0) -> void:
+func _draw_arrow(start: Vector2, finish: Vector2, square: float, fade: float = 1.0, tint: Color = Color(0.86, 0.64, 0.2, 0.92), width_scale: float = 1.0) -> void:
 	var delta := finish - start
 	if delta.length() < square * 0.4 or fade <= 0.0:
 		return
@@ -343,10 +367,10 @@ func _draw_arrow(start: Vector2, finish: Vector2, square: float, fade: float = 1
 	var inset := minf(square * 0.22, delta.length() * 0.38)
 	var tail := start + dir * inset
 	var tip := finish - dir * minf(square * 0.12, delta.length() * 0.3)
-	var width := maxf(square * 0.085, 5.0)
-	var head := width * 2.6
+	var width := maxf(square * 0.085, 5.0) * width_scale
+	var head := maxf(width * 2.6, square * 0.2)
 	var neck := tip - dir * head
-	var color := Color(0.86, 0.64, 0.2, 0.92 * fade)
+	var color := Color(tint.r, tint.g, tint.b, tint.a * fade)
 	var shade := Color(0.12, 0.06, 0.02, 0.88 * fade)
 	draw_line(tail, neck, shade, width + 5.0, true)
 	draw_line(tail, neck, color, width, true)

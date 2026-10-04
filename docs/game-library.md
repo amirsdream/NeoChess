@@ -80,6 +80,7 @@ each move how often White won, drew and lost.
 
 ![The opening book while reviewing](images/book.png)
 
+- Under each move you see the opening it leads to (for example *Ruy Lopez: Morphy Defense*), so you can tell the branches apart. Hover for the ECO code.
 - Click a move to play it (when it is your turn), or look at any position in a
   review.
 - Choose one collection or all of them.

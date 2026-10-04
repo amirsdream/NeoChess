@@ -16,13 +16,12 @@ in a searchable library with an opening book.
 - **Live engine analysis.** The top five lines stream in with score, depth and
   full variation. A plus always means good for *you*, whichever colour you play.
 - **Review any position.** Click a move, or use the arrow keys, and Stockfish
-  analyses that position until you move on. Switch **Live** off to stop it.
+  analyses that position until you move on, and draws its three best moves on the board as thick, medium and thin arrows. Switch **Live** off to stop it.
   Then carry on from there.
 - **Game library.** Every game you play is saved in a local SQLite database.
   Search, filter, review and export them, import big PGN databases, or download
   free ones of strong players. Searching half a million games stays instant.
-- **Opening book.** See what was played after the moves on the board, and how
-  often White won, drew and lost.
+- **Opening names and book.** See which opening you are in (*C70 · Ruy Lopez: Morphy Defense*), where a game left the known lines, and what was played next in your library with how often White won, drew and lost.
 - **12 board themes and 12 piece sets**, and the whole app takes its colours from
   the board you pick.
 - **Pass and play** for two people on one computer (no engine needed), PGN and FEN

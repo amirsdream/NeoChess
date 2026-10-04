@@ -93,6 +93,11 @@ var elo_label: Label
 var engine_edit: LineEdit
 var engine_label: Label
 var show_arrow_check: CheckButton
+var show_best_check: CheckButton
+var opening_label: Label
+var opening_note: Label
+# The first move of Stockfish's three best lines, drawn as arrows on the board.
+var analysis_moves: Array = [{"from": -1, "to": -1}, {"from": -1, "to": -1}, {"from": -1, "to": -1}]
 var show_lines_check: CheckButton
 var lines_box: PanelContainer
 var lines_hint: Label
@@ -660,6 +665,20 @@ func _build_moves_card() -> Control:
 		nav.pressed.connect(Callable(self, str(spec[2])))
 		head.add_child(nav)
 		nav_buttons.append(nav)
+	opening_label = Label.new()
+	opening_label.clip_text = true
+	opening_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	opening_label.add_theme_font_size_override("font_size", 15)
+	opening_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_tint(opening_label, "font_color", C_GOLD_SOFT)
+	col.add_child(opening_label)
+	opening_note = Label.new()
+	opening_note.clip_text = true
+	opening_note.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	opening_note.add_theme_font_size_override("font_size", 12)
+	opening_note.mouse_filter = Control.MOUSE_FILTER_PASS
+	_tint(opening_note, "font_color", C_MUTED)
+	col.add_child(opening_note)
 	moves_label = RichTextLabel.new()
 	moves_label.bbcode_enabled = true
 	moves_label.scroll_active = true
@@ -972,7 +991,15 @@ func _build_look_page() -> Control:
 	show_arrow_check.text = "Last-move arrow"
 	show_arrow_check.button_pressed = true
 	show_arrow_check.tooltip_text = "Draw an arrow from the square a piece left to the square it landed on."
-	page.add_child(_setting("Board overlays", show_arrow_check))
+	show_best_check = CheckButton.new()
+	show_best_check.text = "Best-move arrows"
+	show_best_check.button_pressed = true
+	show_best_check.tooltip_text = "While Stockfish analyses, draw its three best moves as arrows: thick for the best, medium for the second, thin for the third."
+	var overlays := VBoxContainer.new()
+	overlays.add_theme_constant_override("separation", 4)
+	overlays.add_child(show_arrow_check)
+	overlays.add_child(show_best_check)
+	page.add_child(_setting("Board overlays", overlays))
 	return page
 
 
@@ -1084,6 +1111,10 @@ func _connect_signals() -> void:
 	(time_mode_btns[0] as Button).pressed.connect(_set_time_mode.bind(false))
 	(time_mode_btns[1] as Button).pressed.connect(_set_time_mode.bind(true))
 	show_arrow_check.toggled.connect(func(_on: bool) -> void:
+		_save_settings()
+		_refresh()
+	)
+	show_best_check.toggled.connect(func(_on: bool) -> void:
 		_save_settings()
 		_refresh()
 	)
@@ -1502,6 +1533,7 @@ func _refresh() -> void:
 		for sq in target_list:
 			hot[int(sq)] = true
 	board_view.show_last_arrow = show_arrow_check.button_pressed
+	board_view.show_analysis_arrows = show_best_check.button_pressed
 	board_view.show_position(shown.board, _bottom_is_white(), selected, target_list, capture_list, last_a, last_b, checked, hot)
 	var analysis := show_lines_check.button_pressed
 	branches_box.visible = analysis
@@ -1521,6 +1553,7 @@ func _refresh() -> void:
 	status_label.text = _status_text()
 	_paint_status()
 	moves_label.text = _moves_bbcode()
+	_update_opening()
 	review_bar.visible = reviewing
 	review_label.text = _review_caption()
 	_update_nav_buttons()
@@ -1587,6 +1620,9 @@ func _clear_branches() -> void:
 		(card["depth"] as Label).text = ""
 		(card["moves"] as Label).text = ""
 		(card["moves"] as Label).tooltip_text = ""
+	for i in analysis_moves.size():
+		analysis_moves[i] = {"from": -1, "to": -1}
+	board_view.set_analysis_arrows(analysis_moves)
 
 
 func _apply_branch(entry: Dictionary) -> void:
@@ -1606,6 +1642,8 @@ func _apply_branch(entry: Dictionary) -> void:
 		var move = board.match_uci(str(uci))
 		if move.is_empty():
 			break
+		if shown == 0 and index < analysis_moves.size():
+			analysis_moves[index] = {"from": int(move.from), "to": int(move.to)}
 		var san: String = board.to_san(move)
 		if white_turn:
 			sans += "%d. %s " % [number, san]
@@ -1637,6 +1675,48 @@ func _apply_branch(entry: Dictionary) -> void:
 	(card["depth"] as Label).text = "depth %d" % depth if depth > 0 else ""
 	(card["moves"] as Label).text = sans.strip_edges()
 	(card["moves"] as Label).tooltip_text = sans.strip_edges()
+	board_view.set_analysis_arrows(analysis_moves)
+
+
+# The moves played up to the shown position.
+func _shown_moves() -> Array:
+	var count := view_ply if view_ply >= 0 else played.size()
+	return played.slice(0, mini(count, played.size()))
+
+
+# Names the opening of the shown position (see OpeningNames) and says where the
+# game left the known lines.
+func _update_opening() -> void:
+	if opening_label == null:
+		return
+	var moves := _shown_moves()
+	var found: Dictionary = {}
+	if start_fen == Pgn.START_FEN:
+		found = OpeningNames.find_line(moves)
+	if start_fen != Pgn.START_FEN:
+		opening_label.text = "Custom start position"
+		opening_note.text = ""
+		opening_label.tooltip_text = ""
+		return
+	if moves.is_empty():
+		opening_label.text = "Starting position"
+		opening_note.text = "Make a move to see which opening it is."
+		opening_label.tooltip_text = ""
+		return
+	if found.is_empty():
+		opening_label.text = "No known opening yet"
+		opening_note.text = ""
+		opening_label.tooltip_text = ""
+		return
+	opening_label.text = OpeningNames.label(found)
+	opening_label.tooltip_text = "%s\n%s" % [opening_label.text.replace("  ·  ", " "), found["line"]]
+	var at := int(found["at"])
+	if at >= moves.size():
+		opening_note.text = str(found["line"])
+	else:
+		var later := moves.size() - at
+		opening_note.text = "Left the known line after %s, %d move%s ago" % [_ply_name(at), later, "" if later == 1 else "s"]
+	opening_note.tooltip_text = opening_note.text
 
 
 func _moves_bbcode() -> String:
@@ -2357,6 +2437,7 @@ func _check_library(report: String) -> void:
 		var reader := PgnReader.new(FileAccess.open(sample_path, FileAccess.READ))
 		var first := reader.next_game()
 		var second := reader.next_game()
+		text += " openings=%d" % OpeningNames.count()
 		text += " reader=%s/%d/%d" % [str((first.get("tags", {}) as Dictionary).get("White", "?")), (first.get("sans", PackedStringArray()) as PackedStringArray).size(), (second.get("sans", PackedStringArray()) as PackedStringArray).size()]
 		DirAccess.remove_absolute(sample_path)
 	var file := FileAccess.open(report, FileAccess.WRITE)
@@ -2491,11 +2572,23 @@ func _build_book_card() -> Control:
 		row.custom_minimum_size = Vector2(0, 30)
 		row.visible = false
 		row.pressed.connect(_on_book_row.bind(i))
+		var stack := VBoxContainer.new()
+		stack.add_theme_constant_override("separation", 0)
+		stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(stack)
+		stack.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 6)
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 8)
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(line)
-		line.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 6)
+		line.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		stack.add_child(line)
+		var name_label := Label.new()
+		name_label.clip_text = true
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_label.add_theme_font_size_override("font_size", 12)
+		name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_tint(name_label, "font_color", C_MUTED)
+		stack.add_child(name_label)
 		var move_label := Label.new()
 		move_label.custom_minimum_size = Vector2(58, 0)
 		move_label.add_theme_font_size_override("font_size", 16)
@@ -2519,7 +2612,7 @@ func _build_book_card() -> Control:
 		_tint(score_label, "font_color", C_MUTED)
 		line.add_child(score_label)
 		col.add_child(row)
-		book_bars.append({"row": row, "move": move_label, "count": count_label, "bar": bar, "score": score_label})
+		book_bars.append({"row": row, "move": move_label, "count": count_label, "bar": bar, "score": score_label, "name": name_label})
 	return book_card
 
 
@@ -2638,6 +2731,11 @@ func _show_book(rows: Array, hint: String) -> void:
 		var black := int(data["black"])
 		row_button.visible = true
 		(entry["move"] as Label).text = str(data["move"])
+		var named := OpeningNames.find_after(_pos(), str(data["move"])) if start_fen == Pgn.START_FEN else {}
+		(entry["name"] as Label).text = str(named.get("name", ""))
+		(entry["name"] as Label).visible = not named.is_empty()
+		(entry["name"] as Label).tooltip_text = OpeningNames.label(named)
+		row_button.custom_minimum_size = Vector2(0, 46 if not named.is_empty() else 30)
 		(entry["count"] as Label).text = _compact_count(games)
 		(entry["bar"] as ResultBar).set_counts(white, draw, black)
 		var score := (float(white) + float(draw) * 0.5) / float(maxi(games, 1))
@@ -2700,6 +2798,11 @@ func _game_info() -> Dictionary:
 	var info := {"Date": game_date, "White": white, "Black": black}
 	if use_clock:
 		info["TimeControl"] = str(clock_minutes * 60)
+	if start_fen == Pgn.START_FEN:
+		var opening := OpeningNames.find_line(played)
+		if not opening.is_empty():
+			info["ECO"] = opening["eco"]
+			info["Opening"] = opening["name"]
 	info.merge(game_tags, true)
 	return info
 
@@ -2833,6 +2936,7 @@ func _load_settings() -> void:
 	board_index = clampi(int(cfg.get_value("look", "board", 0)), 0, Appearance.board_count() - 1)
 	piece_index = clampi(int(cfg.get_value("look", "pieces", 0)), 0, Appearance.piece_count() - 1)
 	show_arrow_check.button_pressed = bool(cfg.get_value("view", "arrow", true))
+	show_best_check.button_pressed = bool(cfg.get_value("view", "best_arrows", true))
 	show_lines_check.button_pressed = bool(cfg.get_value("view", "lines", false))
 	book_check.set_pressed_no_signal(bool(cfg.get_value("view", "book", false)))
 	book_source_name = str(cfg.get_value("view", "book_source", ""))
@@ -2857,6 +2961,7 @@ func _save_settings() -> void:
 	cfg.set_value("look", "board", board_index)
 	cfg.set_value("look", "pieces", piece_index)
 	cfg.set_value("view", "arrow", show_arrow_check.button_pressed)
+	cfg.set_value("view", "best_arrows", show_best_check.button_pressed)
 	var lines_on := show_lines_check.button_pressed if live_before_review < 0 else live_before_review == 1
 	cfg.set_value("view", "lines", lines_on)
 	cfg.set_value("view", "book", book_check.button_pressed)
@@ -2872,6 +2977,7 @@ func _prepare_shot() -> void:
 			board_index = int(str(arg).get_slice("=", 1))
 	piece_index = 0
 	show_arrow_check.set_pressed_no_signal(true)
+	show_best_check.set_pressed_no_signal(true)
 	show_lines_check.set_pressed_no_signal("--no-lines" not in args)
 	for uci in ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6"]:
 		var move := game.match_uci(uci)
@@ -2897,8 +3003,8 @@ func _prepare_shot() -> void:
 		sample_text = (
 			"info depth 21 multipv 1 score cp 31 pv b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6\n" +
 			"info depth 21 multipv 2 score cp 27 pv b5c6 d7c6 d2d3 f8d6 b1d2 g8e7\n" +
-			"info depth 20 multipv 3 score cp 22 pv b5a4 b7b5 a4b3 g8f6 d2d3 f8e7\n" +
-			"info depth 20 multipv 4 score cp 12 pv d2d3 g8f6 b5a4 f8e7 e1g1 e8g8\n" +
+			"info depth 20 multipv 3 score cp 22 pv d2d3 g8f6 b5a4 f8e7 e1g1 e8g8\n" +
+			"info depth 20 multipv 4 score cp 12 pv c2c3 g8f6 b5a4 f8e7 e1g1 e8g8\n" +
 			"info depth 19 multipv 5 score cp 4 pv b5a4 d7d6 c2c3 g8f6 e1g1 f8e7\n"
 		)
 	var sample := StockfishUci.principal_lines(sample_text, 5)
