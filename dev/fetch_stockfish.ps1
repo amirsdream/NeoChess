@@ -27,9 +27,9 @@ if ($Target -eq "Auto") { $Target = Get-HostTarget }
 
 $forWindows = $Target -eq "Windows"
 $exeName = if ($forWindows) { "stockfish.exe" } else { "stockfish" }
-$target = Join-Path $bin $exeName
+$enginePath = Join-Path $bin $exeName
 
-if ((Test-Path $target) -and -not $Force) {
+if ((Test-Path $enginePath) -and -not $Force) {
     Write-Host "bin/$exeName already exists. Use -Force to download it again."
     exit 0
 }
@@ -70,10 +70,10 @@ if ($forWindows) {
 if (-not $exe) { throw "No Stockfish executable found in the archive." }
 
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
-Copy-Item -LiteralPath $exe.FullName -Destination $target -Force
+Copy-Item -LiteralPath $exe.FullName -Destination $enginePath -Force
 if (-not $forWindows) {
-    & chmod +x $target
-    if ($LASTEXITCODE -ne 0) { throw "Failed to mark $target executable." }
+    & chmod +x $enginePath
+    if ($LASTEXITCODE -ne 0) { throw "Failed to mark $enginePath executable." }
 }
 foreach ($name in "Copying.txt", "AUTHORS") {
     $license = Get-ChildItem -Path $extract -Recurse -Filter $name | Select-Object -First 1
@@ -90,4 +90,4 @@ Source: https://github.com/official-stockfish/Stockfish/releases/tag/sf_$Version
 
 Remove-Item -LiteralPath $archive -Force
 Remove-Item -LiteralPath $extract -Recurse -Force
-Write-Host "Installed $target"
+Write-Host "Installed $enginePath"
